@@ -1,0 +1,26 @@
+# ============================================
+# CONFIGURAÇÃO DO SUPABASE - VARIÁVEIS DE AMBIENTE
+# ============================================
+# Crie um arquivo .env.local na raiz do projeto com o seguinte conteúdo:
+# (ou adicione essas variáveis ao seu arquivo .env.local existente)
+
+VITE_SUPABASE_URL=https://seu-projeto.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sua-chave-publica-aqui
+
+# ============================================
+# ONDE ENCONTRAR ESSAS CREDENCIAIS:
+# ============================================
+# 1. Acesse o painel do Supabase: https://app.supabase.com
+# 2. Selecione seu projeto
+# 3. Vá em Settings > API
+# 4. Copie:
+#    - Project URL -> use como VITE_SUPABASE_URL
+#    - anon/public key -> use como VITE_SUPABASE_PUBLISHABLE_KEY
+
+# ============================================
+# IMPORTANTE:
+# ============================================
+# - O arquivo .env.local não deve ser commitado no Git
+# - Mantenha suas credenciais seguras
+# - Nunca compartilhe sua chave de serviço (service_role key)
+

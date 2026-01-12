@@ -1,0 +1,4 @@
+project_id = "gsdaigqvzdhwudghihqh"
+
+[functions.import-contratacoes]
+verify_jwt = false

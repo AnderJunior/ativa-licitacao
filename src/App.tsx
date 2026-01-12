@@ -1,0 +1,47 @@
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+
+import Auth from "./pages/Auth";
+import Dashboard from "./pages/Dashboard";
+import LicitacaoCadastro from "./pages/licitacoes/Cadastro";
+import LicitacaoConsulta from "./pages/licitacoes/Consulta";
+import LicitacaoTipos from "./pages/licitacoes/Tipos";
+import MarcacoesPendentes from "./pages/licitacoes/MarcacoesPendentes";
+import OrgaoCadastro from "./pages/orgaos/Cadastro";
+import OrgaosSemIBGE from "./pages/orgaos/SemIBGE";
+import OrgaosAgrupamentos from "./pages/orgaos/Agrupamentos";
+import NotFound from "./pages/NotFound";
+
+const queryClient = new QueryClient();
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <AuthProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/licitacoes/cadastro" element={<ProtectedRoute><LicitacaoCadastro /></ProtectedRoute>} />
+            <Route path="/licitacoes/consulta" element={<ProtectedRoute><LicitacaoConsulta /></ProtectedRoute>} />
+            <Route path="/licitacoes/tipos" element={<ProtectedRoute><LicitacaoTipos /></ProtectedRoute>} />
+            <Route path="/licitacoes/marcacoes-pendentes" element={<ProtectedRoute><MarcacoesPendentes /></ProtectedRoute>} />
+            <Route path="/orgaos/cadastro" element={<ProtectedRoute><OrgaoCadastro /></ProtectedRoute>} />
+            <Route path="/orgaos/sem-ibge" element={<ProtectedRoute><OrgaosSemIBGE /></ProtectedRoute>} />
+            <Route path="/orgaos/agrupamentos" element={<ProtectedRoute><OrgaosAgrupamentos /></ProtectedRoute>} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </AuthProvider>
+  </QueryClientProvider>
+);
+
+export default App;

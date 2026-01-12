@@ -1,0 +1,139 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System - Sistema de Licitações */
+/* Cores: Principal #02572E, Principal Hover #E5EEEA, Secundária #3F47CB, Secundária Hover #3F46D2 */
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 150 95% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 150 95% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 150 95% 10%;
+
+    /* Principal: #02572E -> HSL(150, 95%, 17%) */
+    --primary: 150 95% 17%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Principal Hover: #E5EEEA -> HSL(145, 22%, 92%) */
+    --primary-hover: 145 22% 92%;
+
+    /* Secundária: #3F47CB -> HSL(236, 55%, 52%) */
+    --secondary: 236 55% 52%;
+    --secondary-foreground: 0 0% 100%;
+    
+    /* Secundária Hover: #3F46D2 -> HSL(238, 58%, 54%) */
+    --secondary-hover: 238 58% 54%;
+
+    --muted: 145 20% 95%;
+    --muted-foreground: 150 10% 40%;
+
+    --accent: 145 22% 92%;
+    --accent-foreground: 150 95% 17%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 10% 85%;
+    --input: 150 10% 85%;
+    --ring: 150 95% 17%;
+
+    --radius: 0.5rem;
+
+    /* Sidebar */
+    --sidebar-background: 150 95% 17%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 150 95% 17%;
+    --sidebar-accent: 150 80% 22%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 150 80% 22%;
+    --sidebar-ring: 0 0% 100%;
+
+    /* Extras */
+    --success: 150 95% 17%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 236 55% 52%;
+    --info-foreground: 0 0% 100%;
+  }
+
+  .dark {
+    --background: 150 20% 8%;
+    --foreground: 0 0% 95%;
+
+    --card: 150 20% 12%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 150 20% 12%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 150 80% 35%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 150 40% 20%;
+
+    --secondary: 236 55% 60%;
+    --secondary-foreground: 0 0% 100%;
+    --secondary-hover: 238 58% 65%;
+
+    --muted: 150 20% 18%;
+    --muted-foreground: 150 10% 60%;
+
+    --accent: 150 40% 20%;
+    --accent-foreground: 0 0% 95%;
+
+    --destructive: 0 70% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 20% 25%;
+    --input: 150 20% 25%;
+    --ring: 150 80% 35%;
+
+    --sidebar-background: 150 30% 12%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 0 0% 95%;
+    --sidebar-primary-foreground: 150 30% 12%;
+    --sidebar-accent: 150 40% 18%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 150 30% 20%;
+    --sidebar-ring: 0 0% 95%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html, body, #root {
+    @apply h-full overflow-hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 transition-colors;
+  }
+  
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors;
+  }
+  
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-2 text-sidebar-foreground hover:bg-sidebar-accent rounded-md transition-colors cursor-pointer;
+  }
+  
+  .sidebar-item-active {
+    @apply bg-sidebar-accent text-sidebar-accent-foreground;
+  }
+}
