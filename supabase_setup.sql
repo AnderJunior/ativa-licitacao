@@ -311,3 +311,4 @@ ON public.contratacoes_marcacoes FOR DELETE TO authenticated USING (true);
 
 
 
+
