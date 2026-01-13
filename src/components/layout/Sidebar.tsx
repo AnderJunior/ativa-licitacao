@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ChevronDown, 
@@ -64,6 +64,17 @@ export function Sidebar() {
   };
 
   const [openMenus, setOpenMenus] = useState<string[]>(getInitialOpenMenus);
+
+  // Update open menus when location changes
+  useEffect(() => {
+    const newOpenMenus: string[] = [];
+    menuItems.forEach(item => {
+      if (item.children.some(child => location.pathname.startsWith(child.path.split('?')[0]))) {
+        newOpenMenus.push(item.label);
+      }
+    });
+    setOpenMenus(newOpenMenus);
+  }, [location.pathname]);
 
   const toggleMenu = (label: string) => {
     setOpenMenus(prev => 

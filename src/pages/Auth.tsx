@@ -19,7 +19,7 @@ export default function Auth() {
 
   useEffect(() => {
     if (user) {
-      navigate('/');
+      navigate('/licitacoes/cadastro');
     }
   }, [user, navigate]);
 
@@ -38,7 +38,7 @@ export default function Auth() {
           }
         } else {
           toast.success('Login realizado com sucesso!');
-          navigate('/');
+          navigate('/licitacoes/cadastro');
         }
       } else {
         const { error } = await signUp(email, password, fullName);
@@ -50,7 +50,7 @@ export default function Auth() {
           }
         } else {
           toast.success('Conta criada com sucesso!');
-          navigate('/');
+          navigate('/licitacoes/cadastro');
         }
       }
     } catch (err) {

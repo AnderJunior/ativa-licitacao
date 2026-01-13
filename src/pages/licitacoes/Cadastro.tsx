@@ -88,6 +88,7 @@ export default function LicitacaoCadastro() {
   const [linksPopupOpen, setLinksPopupOpen] = useState(false);
   const [buscarPopupOpen, setBuscarPopupOpen] = useState(false);
   const [tipoPopupOpen, setTipoPopupOpen] = useState(false);
+  const [tipoSearchTerm, setTipoSearchTerm] = useState('');
   const [orgaoPopupOpen, setOrgaoPopupOpen] = useState(false);
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   
@@ -216,7 +217,7 @@ export default function LicitacaoCadastro() {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       
       // Ignora teclas de navegação e função
-      if (e.key.length > 1 && !['Backspace', 'Delete'].includes(e.key)) return;
+      if (e.key.length > 1 && !['Backspace', 'Delete', 'Space'].includes(e.key)) return;
       
       // Se for Backspace ou Delete, limpa o buffer
       if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -246,6 +247,45 @@ export default function LicitacaoCadastro() {
         });
         if (searchTimeoutRef.current) {
           clearTimeout(searchTimeoutRef.current);
+        }
+        return;
+      }
+      
+      // Permite letras, números e espaço
+      if (e.key === ' ') {
+        e.preventDefault();
+        
+        // Limpa timeout anterior
+        if (searchTimeoutRef.current) {
+          clearTimeout(searchTimeoutRef.current);
+        }
+        
+        // Adiciona espaço ao buffer
+        const agora = Date.now();
+        const tempoDesdeUltimaTecla = agora - lastKeyTimeRef.current;
+        const deveResetarBuffer = tempoDesdeUltimaTecla > 800 || searchBuffer === '';
+        
+        lastKeyTimeRef.current = agora;
+        
+        const novoBuffer = deveResetarBuffer ? ' ' : (searchBuffer + ' ');
+        setSearchBuffer(novoBuffer);
+        
+        // Busca a atividade
+        const atividadeEncontrada = buscarAtividadePorNome(ramos, novoBuffer);
+        
+        if (atividadeEncontrada) {
+          scrollParaAtividade(atividadeEncontrada.id);
+        } else {
+          // Se não encontrou, limpa o destaque mas mantém o buffer por mais tempo
+          setHighlightedAtividadeId(null);
+          if (highlightTimeoutRef.current) {
+            clearTimeout(highlightTimeoutRef.current);
+          }
+          // Aumenta o timeout para 2 segundos quando há espaço (permite continuar digitando)
+          searchTimeoutRef.current = setTimeout(() => {
+            setSearchBuffer('');
+            setHighlightedAtividadeId(null);
+          }, 2000);
         }
         return;
       }
@@ -921,6 +961,55 @@ export default function LicitacaoCadastro() {
     }
   };
 
+  // Atalho Ctrl+S para salvar licitação
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Verifica se é Ctrl+S (ou Cmd+S no Mac)
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        // Verifica se não está digitando em um input ou textarea
+        const activeElement = document.activeElement;
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+          // Se estiver em um input/textarea, permite o comportamento padrão (salvar página)
+          return;
+        }
+        
+        e.preventDefault();
+        
+        // Verifica se está salvando
+        if (saving) {
+          return;
+        }
+        
+        // Verifica campos obrigatórios e mostra notificação se faltar algum
+        const camposFaltando: string[] = [];
+        
+        if (!formData.modalidade || !tipos.find(t => t.id === formData.modalidade)) {
+          camposFaltando.push('Tipo');
+        }
+        
+        if (!formData.orgao_pncp || !orgaos.find(o => o.nome_orgao === formData.orgao_pncp || o.id === formData.orgao_pncp)) {
+          camposFaltando.push('Órgão');
+        }
+        
+        if (!formData.sequencial_compra && !formData.ano_compra) {
+          camposFaltando.push('Número');
+        }
+        
+        // Se faltar algum campo, mostra notificação
+        if (camposFaltando.length > 0) {
+          toast.error(`Por favor, preencha os campos obrigatórios: ${camposFaltando.join(', ')}`);
+          return;
+        }
+        
+        // Se todos os campos estiverem preenchidos, salva
+        handleSave();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saving, formData.modalidade, formData.orgao_pncp, formData.sequencial_compra, formData.ano_compra, tipos, orgaos, handleSave]);
+
   const handleDelete = async () => {
     if (!contratacaoId) return;
     if (!confirm('Tem certeza que deseja excluir esta licitação?')) return;
@@ -978,6 +1067,11 @@ export default function LicitacaoCadastro() {
   };
 
   const formatarNumeroLicitacao = (): string => {
+    // Se num_licitacao já está preenchido como string, usa ele diretamente
+    if (formData.num_licitacao && formData.num_licitacao.trim() !== '') {
+      return formData.num_licitacao;
+    }
+    // Caso contrário, formata a partir de sequencial e ano
     const sequencial = formData.sequencial_compra;
     const ano = formData.ano_compra;
     if (sequencial === null && ano === null) return '';
@@ -988,12 +1082,23 @@ export default function LicitacaoCadastro() {
 
   const parsearNumeroLicitacao = (valor: string) => {
     if (!valor || valor.trim() === '') {
-      return { sequencial: null, ano: null };
+      return { sequencial: null, ano: null, valorString: '' };
     }
     const partes = valor.split('/').map(p => p.trim());
-    const sequencial = partes[0] && partes[0] !== '' ? parseInt(partes[0]) || null : null;
-    const ano = partes[1] && partes[1] !== '' ? parseInt(partes[1]) || null : null;
-    return { sequencial, ano };
+    // Mantém os zeros à esquerda preservando como string
+    const sequencialStr = partes[0] && partes[0] !== '' ? partes[0] : '';
+    const anoStr = partes[1] && partes[1] !== '' ? partes[1] : '';
+    
+    // Converte para número apenas se for válido (para salvar no banco)
+    // Mas preserva a string original para exibição
+    const sequencial = sequencialStr !== '' && /^\d+$/.test(sequencialStr) ? parseInt(sequencialStr) : null;
+    const ano = anoStr !== '' && /^\d+$/.test(anoStr) ? parseInt(anoStr) : null;
+    
+    return { 
+      sequencial, 
+      ano, 
+      valorString: valor.trim() // Mantém o valor original digitado com zeros à esquerda e "/"
+    };
   };
 
   // Formata data com máscara DD/MM/AAAA enquanto digita
@@ -1045,21 +1150,72 @@ export default function LicitacaoCadastro() {
     return format(data, 'dd/MM/yyyy');
   };
 
+  // Normaliza texto removendo acentos e normalizando espaços
+  const normalizarTexto = (texto: string): string => {
+    if (!texto) return '';
+    return texto
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remove acentos
+      .replace(/\s+/g, ' ') // Normaliza espaços múltiplos para um único espaço
+      .trim(); // Remove espaços no início e fim, mas mantém espaços no meio
+  };
+
   // Busca recursiva de atividade por nome
   const buscarAtividadePorNome = (items: RamoAtividade[], termo: string): RamoAtividade | null => {
-    const termoLower = termo.toLowerCase();
+    if (!termo) return null;
+    // Remove espaços apenas no início e fim, mantém espaços no meio
+    const termoLimpo = termo.trim();
+    if (termoLimpo === '') return null;
     
-    for (const item of items) {
-      // Verifica se o nome da atividade contém o termo
-      if (item.nome.toLowerCase().includes(termoLower)) {
-        return item;
+    const termoNormalizado = normalizarTexto(termoLimpo);
+    if (!termoNormalizado) return null;
+    
+    // Lista para armazenar resultados com prioridade
+    const resultados: Array<{ item: RamoAtividade; prioridade: number }> = [];
+    
+    const buscarRecursivo = (items: RamoAtividade[]): void => {
+      for (const item of items) {
+        const nomeNormalizado = normalizarTexto(item.nome);
+        let prioridade = 0;
+        
+        // Prioridade 1: Nome começa exatamente com o termo completo
+        if (nomeNormalizado.startsWith(termoNormalizado)) {
+          prioridade = 1;
+        }
+        // Prioridade 2: Nome contém o termo completo como substring
+        else if (nomeNormalizado.includes(termoNormalizado)) {
+          prioridade = 2;
+        }
+        
+        if (prioridade > 0) {
+          resultados.push({ item, prioridade });
+        }
+        
+        // Busca nos filhos recursivamente
+        if (item.children && item.children.length > 0) {
+          buscarRecursivo(item.children);
+        }
       }
-      
-      // Busca nos filhos recursivamente
-      if (item.children && item.children.length > 0) {
-        const encontrado = buscarAtividadePorNome(item.children, termo);
-        if (encontrado) return encontrado;
-      }
+    };
+    
+    buscarRecursivo(items);
+    
+    // Retorna o item com maior prioridade (menor número = maior prioridade)
+    if (resultados.length > 0) {
+      resultados.sort((a, b) => {
+        // Ordena por prioridade primeiro
+        if (a.prioridade !== b.prioridade) {
+          return a.prioridade - b.prioridade;
+        }
+        // Se mesma prioridade, ordena por posição no nome (mais próximo do início = melhor)
+        const nomeA = normalizarTexto(a.item.nome);
+        const nomeB = normalizarTexto(b.item.nome);
+        const posA = nomeA.indexOf(termoNormalizado);
+        const posB = nomeB.indexOf(termoNormalizado);
+        return posA - posB;
+      });
+      return resultados[0].item;
     }
     
     return null;
@@ -1095,6 +1251,21 @@ export default function LicitacaoCadastro() {
     }
   };
 
+  const handleItemClick = (atividadeId: string) => {
+    // Limpa timeout anterior de destaque
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+    }
+    
+    // Define a atividade como destacada
+    setHighlightedAtividadeId(atividadeId);
+    
+    // Remove o destaque após 2 segundos (opcional - pode remover se quiser que fique marcado até clicar em outro)
+    highlightTimeoutRef.current = setTimeout(() => {
+      setHighlightedAtividadeId(null);
+    }, 2000);
+  };
+
   const renderRamoTree = (items: RamoAtividade[], level = 0) => {
     return items.map(item => {
       const isHighlighted = highlightedAtividadeId === item.id;
@@ -1105,20 +1276,27 @@ export default function LicitacaoCadastro() {
           {/* Item principal */}
           <div 
             className={cn(
-              "relative py-1 rounded px-1 flex items-start transition-colors duration-200",
+              "relative py-1 rounded px-1 flex items-start transition-colors duration-200 cursor-pointer",
               isSelected ? "bg-yellow-200" : isHighlighted ? "bg-blue-100" : ""
             )}
             data-atividade-id={item.id}
+            onClick={() => handleItemClick(item.id)}
           >
             <Checkbox
               id={item.id}
               checked={isSelected}
-              onCheckedChange={() => toggleRamo(item.id)}
+              onCheckedChange={(checked) => {
+                toggleRamo(item.id);
+                // Também destaca ao marcar/desmarcar o checkbox
+                if (checked) {
+                  handleItemClick(item.id);
+                }
+              }}
               className="h-3.5 w-3.5 mt-0.5"
+              onClick={(e) => e.stopPropagation()}
             />
             <span 
-              className="pl-2 text-[13px] text-[#262626] lowercase cursor-default select-none"
-              onClick={(e) => e.stopPropagation()}
+              className="pl-2 text-[13px] text-[#262626] lowercase cursor-pointer select-none flex-1"
             >
               {item.nome}
             </span>
@@ -1237,7 +1415,15 @@ export default function LicitacaoCadastro() {
           <div className="grid grid-cols-3 gap-4 mb-4">
             <div className="space-y-1">
               <Label htmlFor="tipo" className="text-sm font-normal text-[#262626]">Tipo</Label>
-              <Popover open={tipoPopupOpen} onOpenChange={setTipoPopupOpen}>
+              <Popover 
+                open={tipoPopupOpen} 
+                onOpenChange={(open) => {
+                  setTipoPopupOpen(open);
+                  if (!open) {
+                    setTipoSearchTerm(''); // Limpa a busca quando fechar
+                  }
+                }}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
@@ -1254,33 +1440,53 @@ export default function LicitacaoCadastro() {
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                  <Command>
-                    <CommandInput placeholder="Buscar tipo..." />
+                  <Command 
+                    filter={(value, search) => {
+                      // Desabilita o filtro padrão - vamos filtrar manualmente
+                      return 1;
+                    }}
+                  >
+                    <CommandInput 
+                      placeholder="Buscar tipo..." 
+                      value={tipoSearchTerm}
+                      onValueChange={(value) => {
+                        setTipoSearchTerm(value);
+                      }}
+                    />
                     <CommandList>
                       <CommandEmpty>Nenhum tipo encontrado.</CommandEmpty>
                       <CommandGroup className="p-0">
-                        {tipos.map((tipo) => (
-                          <CommandItem
-                            key={tipo.id}
-                            value={`${tipo.sigla} ${tipo.descricao || ''}`}
-                            onSelect={() => {
-                              setFormData({ 
-                                ...formData, 
-                                modalidade: tipo.id, // ID do tipo (para o dropdown)
-                                descricao_modalidade: tipo.id // ID do tipo (UUID) - não a descrição!
-                              });
-                              setTipoPopupOpen(false);
-                            }}
-                            className={cn(
-                              "px-3 py-2 rounded-none cursor-pointer",
-                              formData.modalidade === tipo.id
-                                ? "!bg-[#02572E]/10 !text-[#02572E]"
-                                : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
-                            )}
-                          >
-                            {tipo.sigla} - {tipo.descricao}
-                          </CommandItem>
-                        ))}
+                        {tipos
+                          .filter((tipo) => {
+                            if (!tipoSearchTerm) return true;
+                            // Filtra apenas os que começam com o termo de busca (case insensitive)
+                            const searchLower = tipoSearchTerm.toLowerCase();
+                            const siglaLower = tipo.sigla?.toLowerCase() || '';
+                            return siglaLower.startsWith(searchLower);
+                          })
+                          .map((tipo) => (
+                            <CommandItem
+                              key={tipo.id}
+                              value={`${tipo.sigla} ${tipo.descricao || ''}`}
+                              onSelect={() => {
+                                setFormData({ 
+                                  ...formData, 
+                                  modalidade: tipo.id, // ID do tipo (para o dropdown)
+                                  descricao_modalidade: tipo.id // ID do tipo (UUID) - não a descrição!
+                                });
+                                setTipoPopupOpen(false);
+                                setTipoSearchTerm(''); // Limpa a busca ao selecionar
+                              }}
+                              className={cn(
+                                "px-3 py-2 rounded-none cursor-pointer",
+                                formData.modalidade === tipo.id
+                                  ? "!bg-[#02572E]/10 !text-[#02572E]"
+                                  : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                              )}
+                            >
+                              {tipo.sigla} - {tipo.descricao}
+                            </CommandItem>
+                          ))}
                       </CommandGroup>
                     </CommandList>
                   </Command>
@@ -1300,7 +1506,7 @@ export default function LicitacaoCadastro() {
                     ...formData, 
                     sequencial_compra: sequencial,
                     ano_compra: ano,
-                    num_licitacao: valor
+                    num_licitacao: valor // Preserva o valor original digitado (incluindo zeros à esquerda e "/")
                   });
                 }}
                 className="h-9 bg-white"

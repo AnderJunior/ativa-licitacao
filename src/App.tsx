@@ -2,12 +2,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 import Auth from "./pages/Auth";
-import Dashboard from "./pages/Dashboard";
 import LicitacaoCadastro from "./pages/licitacoes/Cadastro";
 import LicitacaoConsulta from "./pages/licitacoes/Consulta";
 import LicitacaoTipos from "./pages/licitacoes/Tipos";
@@ -28,7 +27,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/auth" element={<Auth />} />
-            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/" element={<ProtectedRoute><Navigate to="/licitacoes/cadastro" replace /></ProtectedRoute>} />
             <Route path="/licitacoes/cadastro" element={<ProtectedRoute><LicitacaoCadastro /></ProtectedRoute>} />
             <Route path="/licitacoes/consulta" element={<ProtectedRoute><LicitacaoConsulta /></ProtectedRoute>} />
             <Route path="/licitacoes/tipos" element={<ProtectedRoute><LicitacaoTipos /></ProtectedRoute>} />
