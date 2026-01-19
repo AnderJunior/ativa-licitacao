@@ -62,7 +62,23 @@ export function LinksPopup({
   };
 
   const handleSave = () => {
-    onSave(linkProcesso, localLinks);
+    // Se linkProcesso estava na lista original de links e foi removido, limpa o linkProcesso
+    // Caso contrário, mantém o linkProcesso como está
+    const estavaNaListaOriginal = linkProcesso && (links || []).includes(linkProcesso);
+    const aindaEstaNaLista = linkProcesso && localLinks.includes(linkProcesso);
+    
+    let linkProcessoAtual: string | null = null;
+    if (linkProcesso && linkProcesso.trim() !== '') {
+      // Se estava na lista original e foi removido, limpa
+      if (estavaNaListaOriginal && !aindaEstaNaLista) {
+        linkProcessoAtual = null;
+      } else {
+        // Caso contrário, mantém
+        linkProcessoAtual = linkProcesso;
+      }
+    }
+    
+    onSave(linkProcessoAtual, localLinks);
     onOpenChange(false);
   };
 
@@ -73,19 +89,42 @@ export function LinksPopup({
     onOpenChange(false);
   };
 
-  // Todos os links para exibir
-  const allLinks = localLinks;
+  // Todos os links para exibir - inclui link_processo no início se existir e não estiver duplicado
+  const allLinksForDisplay = (() => {
+    const linksList = [...localLinks];
+    // Se link_processo existir e não estiver na lista, adiciona no início
+    if (linkProcesso && linkProcesso.trim() !== '' && !linksList.includes(linkProcesso)) {
+      linksList.unshift(linkProcesso);
+    }
+    return linksList;
+  })();
+  
+  const allLinks = allLinksForDisplay;
+  
+  // Função auxiliar para verificar se um link é o link_processo
+  const isLinkProcesso = (url: string) => {
+    return linkProcesso && url === linkProcesso;
+  };
+  
+  // Função auxiliar para obter o índice na lista localLinks
+  const getLocalLinksIndex = (url: string): number => {
+    // Se for o link_processo e não estiver na lista localLinks, retorna -1
+    if (isLinkProcesso(url) && !localLinks.includes(url)) {
+      return -1;
+    }
+    return localLinks.indexOf(url);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] p-0 gap-0">
+      <DialogContent className="sm:max-w-[500px] p-0 gap-0 overflow-hidden">
         <DialogHeader className="p-6 pb-4">
           <DialogTitle className="text-xl font-semibold text-[#262626]">
             Licitações Links
           </DialogTitle>
         </DialogHeader>
 
-        <div className="px-6 pb-4 space-y-4">
+        <div className="px-6 pb-4 space-y-4 overflow-hidden">
           {/* Campo para adicionar novos links */}
           <div className="space-y-2">
             <Label className="text-sm text-[#262626]">Adicionar Links</Label>
@@ -118,52 +157,69 @@ export function LinksPopup({
               Links Cadastrados ({allLinks.length})
             </Label>
             
-            <ScrollArea className="h-[200px] pr-4">
+            <ScrollArea className="h-[200px] pr-4 w-full">
               {allLinks.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-4 text-center">
                   Nenhum link cadastrado ainda.
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {allLinks.map((url, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center gap-2 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 group"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-blue-600 hover:text-blue-800 hover:underline truncate block"
-                        >
-                          {url}
-                        </a>
-                      </div>
-                      
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-gray-500 hover:text-blue-600"
-                          onClick={() => window.open(url, '_blank')}
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </Button>
+                <div className="space-y-2 w-full">
+                  {allLinks.map((url, displayIndex) => {
+                    const isLinkProcessoUrl = isLinkProcesso(url);
+                    const localLinksIndex = getLocalLinksIndex(url);
+                    
+                    return (
+                      <div
+                        key={url}
+                        className="flex items-start gap-2 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 group w-full max-w-full overflow-hidden"
+                      >
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:text-blue-800 hover:underline break-all block"
+                            title={url}
+                          >
+                            {url}
+                          </a>
+                        </div>
+                        {isLinkProcessoUrl && (
+                          <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full whitespace-nowrap shrink-0 self-start">
+                            Link Original
+                          </span>
+                        )}
                         
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-gray-500 hover:text-red-600"
-                          onClick={() => handleRemoveLink(index)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        <div className="flex items-center gap-1 shrink-0 self-start">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-gray-500 hover:text-blue-600 shrink-0"
+                            onClick={() => window.open(url, '_blank')}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Button>
+                          
+                          {localLinksIndex !== -1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-gray-500 hover:text-red-600 shrink-0"
+                              onClick={() => {
+                                if (localLinksIndex >= 0 && localLinksIndex < localLinks.length) {
+                                  handleRemoveLink(localLinksIndex);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>

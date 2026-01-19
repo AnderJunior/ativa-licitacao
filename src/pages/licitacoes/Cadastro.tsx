@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -75,7 +77,8 @@ const UFS = [
 ];
 
 export default function LicitacaoCadastro() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const contratacaoId = searchParams.get('id');
   const { user } = useAuth();
 
@@ -87,6 +90,7 @@ export default function LicitacaoCadastro() {
   const [selectedRamos, setSelectedRamos] = useState<string[]>([]);
   const [linksPopupOpen, setLinksPopupOpen] = useState(false);
   const [buscarPopupOpen, setBuscarPopupOpen] = useState(false);
+  const [exibirPopupOpen, setExibirPopupOpen] = useState(false);
   const [tipoPopupOpen, setTipoPopupOpen] = useState(false);
   const [tipoSearchTerm, setTipoSearchTerm] = useState('');
   const [orgaoPopupOpen, setOrgaoPopupOpen] = useState(false);
@@ -126,27 +130,6 @@ export default function LicitacaoCadastro() {
     }
   }, [contratacaoId]);
 
-  // Identifica automaticamente o tipo quando os tipos são carregados e há uma licitação sem tipo definido
-  useEffect(() => {
-    if (tipos.length > 0 && formData.id && (!formData.modalidade || !tipos.find(t => t.id === formData.modalidade))) {
-      // Tenta identificar pela modalidade ou modalidade_ativa da licitação carregada
-      const modalidadeParaIdentificar = (formData as any).modalidade_ativa || (formData as any).modalidade;
-      if (modalidadeParaIdentificar && typeof modalidadeParaIdentificar === 'string') {
-        const tipoId = identificarTipoPorModalidade(modalidadeParaIdentificar);
-        if (tipoId && tipoId !== formData.modalidade) {
-          const tipoEncontrado = tipos.find(t => t.id === tipoId);
-          if (tipoEncontrado) {
-            setFormData(prev => ({
-              ...prev,
-              modalidade: tipoId, // ID do tipo (para o dropdown)
-              descricao_modalidade: tipoId, // ID do tipo (UUID) - não a descrição!
-            }));
-            toast.success(`Tipo identificado automaticamente: ${tipoEncontrado.sigla} - ${tipoEncontrado.descricao}`);
-          }
-        }
-      }
-    }
-  }, [tipos.length, formData.id, formData.modalidade]);
 
   // Valida o orgão quando os orgãos são carregados e há uma licitação com orgão preenchido
   useEffect(() => {
@@ -381,36 +364,6 @@ export default function LicitacaoCadastro() {
     if (data) setTipos(data);
   };
 
-  // Função para identificar o tipo de licitação baseado na modalidade
-  const identificarTipoPorModalidade = (modalidadeTexto: string | null): string | null => {
-    if (!modalidadeTexto || !tipos.length) return null;
-
-    const modalidadeLower = modalidadeTexto.toLowerCase().trim();
-
-    // Tenta encontrar por sigla exata
-    let tipoEncontrado = tipos.find(t => 
-      t.sigla?.toLowerCase().trim() === modalidadeLower
-    );
-
-    // Se não encontrou, tenta encontrar por sigla parcial (início do texto)
-    if (!tipoEncontrado) {
-      tipoEncontrado = tipos.find(t => {
-        const siglaLower = t.sigla?.toLowerCase().trim() || '';
-        return siglaLower && modalidadeLower.startsWith(siglaLower);
-      });
-    }
-
-    // Se não encontrou, tenta encontrar na descrição
-    if (!tipoEncontrado) {
-      tipoEncontrado = tipos.find(t => {
-        const descricaoLower = t.descricao?.toLowerCase().trim() || '';
-        return descricaoLower && modalidadeLower.includes(descricaoLower);
-      });
-    }
-
-    return tipoEncontrado?.id || null;
-  };
-
   const loadOrgaos = async () => {
     const { data } = await supabase.from('orgaos').select('id, nome_orgao').order('nome_orgao');
     if (data) setOrgaos(data);
@@ -574,18 +527,23 @@ export default function LicitacaoCadastro() {
         ? `${data.num_ativa}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`
         : '';
 
-      // Formata num_licitacao se não existir mas tiver sequencial_compra e ano_compra
-      let numLicitacaoFormatado = data.num_licitacao || '';
-      if (!numLicitacaoFormatado && sequencialCompra !== null && anoCompra !== null) {
+      // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra se disponível
+      let numLicitacaoFormatado = '';
+      if (sequencialCompra !== null && anoCompra !== null) {
         numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
       }
+
+      // Mantém a UF selecionada: sempre usa a UF da licitação se existir
+      // Se não tiver UF na licitação, mantém a UF anteriormente selecionada no formulário
+      const ufParaManter = data.uf || formData.pncp || '';
 
       setFormData({
         ...data,
         num_ativa: numAtivaFormatado,
         cadastrado_por: nomeUsuario,
-        pncp: data.cd_pn || '',
-        modalidade: tipoId || '', // Usa o ID do tipo se existir, senão vazio para identificação automática depois
+        pncp: ufParaManter, // Mantém a UF selecionada
+        modalidade: tipoId || '', // Usa apenas o tipo que vem do banco
+        descricao_modalidade: tipoId || null,
         orgao_pncp: orgaoValido,
         dt_publicacao: data.dt_publicacao 
           ? new Date(data.dt_publicacao).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -618,6 +576,52 @@ export default function LicitacaoCadastro() {
     toast.success('Links atualizados! Salve a licitação para persistir.');
   };
 
+  const handleProximaLicitacaoUF = async () => {
+    const ufSelecionada = formData.pncp;
+    
+    if (!ufSelecionada || ufSelecionada.trim() === '') {
+      toast.warning('Por favor, selecione uma UF no campo PNCP antes de buscar a próxima licitação.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Busca a primeira licitação não cadastrada da UF selecionada
+      // Ordena por created_at ascendente (mais antiga primeiro)
+      const { data, error } = await supabase
+        .from('contratacoes')
+        .select('id')
+        .eq('uf', ufSelecionada)
+        .eq('cadastrado', false)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Erro ao buscar licitação:', error);
+        toast.error('Erro ao buscar licitação. Tente novamente.');
+        setLoading(false);
+        return;
+      }
+
+      if (!data || !data.id) {
+        toast.info(`Todas as licitações do estado ${ufSelecionada} já foram cadastradas.`);
+        setLoading(false);
+        return;
+      }
+
+      // Navega para a URL com o ID da licitação encontrada
+      navigate(`/licitacoes/cadastro?id=${data.id}`);
+      // O useEffect vai detectar a mudança no contratacaoId e carregar a licitação automaticamente
+      
+    } catch (error) {
+      console.error('Erro ao buscar próxima licitação:', error);
+      toast.error('Erro ao buscar próxima licitação. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLicitacaoEncontrada = async (licitacao: any, ramos: string[]) => {
     // Formata o conteúdo no padrão
     const conteudoFormatado = formatarConteudoLicitacao(licitacao);
@@ -639,25 +643,7 @@ export default function LicitacaoCadastro() {
     }
 
     // Usa o descricao_modalidade (ID do tipo) se existir
-    // Se não existir e tipos já foram carregados, tenta identificar automaticamente
-    // Senão, a identificação será feita pelo useEffect quando os tipos forem carregados
-    let tipoId = licitacao.descricao_modalidade || null;
-    if (!tipoId && tipos.length > 0) {
-      // Tenta identificar pela modalidade ou modalidade_ativa
-      const modalidadeParaIdentificar = licitacao.modalidade_ativa || licitacao.modalidade;
-      if (modalidadeParaIdentificar && typeof modalidadeParaIdentificar === 'string') {
-        tipoId = identificarTipoPorModalidade(modalidadeParaIdentificar);
-        
-        if (tipoId) {
-          const tipoEncontrado = tipos.find(t => t.id === tipoId);
-          if (tipoEncontrado) {
-            toast.success(`Tipo identificado automaticamente: ${tipoEncontrado.sigla} - ${tipoEncontrado.descricao}`);
-          }
-        } else {
-          toast.warning('Não foi possível identificar o tipo automaticamente. Por favor, selecione manualmente.');
-        }
-      }
-    }
+    const tipoId = licitacao.descricao_modalidade || null;
 
     // Valida e ajusta o orgão para garantir que existe nos orgãos cadastrados
     let orgaoValido = licitacao.orgao_pncp || '';
@@ -690,9 +676,9 @@ export default function LicitacaoCadastro() {
       ? `${licitacao.num_ativa}.${String(new Date(licitacao.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(licitacao.created_at).getFullYear()).slice(-2)}`
       : '';
 
-    // Formata num_licitacao se não existir mas tiver sequencial_compra e ano_compra
-    let numLicitacaoFormatado = licitacao.num_licitacao || '';
-    if (!numLicitacaoFormatado && sequencialCompra !== null && anoCompra !== null) {
+    // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra se disponível
+    let numLicitacaoFormatado = '';
+    if (sequencialCompra !== null && anoCompra !== null) {
       numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
     }
 
@@ -1067,17 +1053,13 @@ export default function LicitacaoCadastro() {
   };
 
   const formatarNumeroLicitacao = (): string => {
-    // Se num_licitacao já está preenchido como string, usa ele diretamente
-    if (formData.num_licitacao && formData.num_licitacao.trim() !== '') {
-      return formData.num_licitacao;
-    }
-    // Caso contrário, formata a partir de sequencial e ano
+    // SEMPRE formata como sequencial_compra/ano_compra se disponível
     const sequencial = formData.sequencial_compra;
     const ano = formData.ano_compra;
-    if (sequencial === null && ano === null) return '';
-    if (sequencial === null || sequencial === undefined) return ano ? ano.toString() : '';
-    if (ano === null || ano === undefined) return sequencial.toString();
-    return `${sequencial}/${ano}`;
+    if (sequencial !== null && sequencial !== undefined && ano !== null && ano !== undefined) {
+      return `${sequencial}/${ano}`;
+    }
+    return '';
   };
 
   const parsearNumeroLicitacao = (valor: string) => {
@@ -1402,12 +1384,41 @@ export default function LicitacaoCadastro() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="pncp" className="text-sm font-normal text-[#262626]">PNCP</Label>
-              <Input
-                id="pncp"
-                value={formData.pncp || ''}
-                onChange={(e) => setFormData({ ...formData, pncp: e.target.value })}
-                className="h-9 bg-white"
-              />
+              <div className="flex gap-2">
+                <Select
+                  value={formData.pncp || ''}
+                  onValueChange={(value) => setFormData({ ...formData, pncp: value })}
+                >
+                  <SelectTrigger id="pncp" className="h-9 bg-white flex-1">
+                    <SelectValue placeholder="Selecione uma UF" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {UFS.map((uf) => (
+                      <SelectItem key={uf} value={uf}>
+                        {uf}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                  type="button"
+                >
+                  ==
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                  type="button"
+                  onClick={handleProximaLicitacaoUF}
+                  disabled={loading}
+                >
+                  →
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -1626,9 +1637,15 @@ export default function LicitacaoCadastro() {
               <Link2 className="w-4 h-4 mr-2" />
               Links (F2)
             </Button>
-            <Button variant="outline" className="bg-gray-100 hover:bg-gray-200 text-[#262626]">
-              Exibir Licitação
-            </Button>
+            {formData.link_processo && formData.link_processo.trim() !== '' && (
+              <Button 
+                variant="outline" 
+                className="bg-gray-100 hover:bg-gray-200 text-[#262626]"
+                onClick={() => setExibirPopupOpen(true)}
+              >
+                Exibir Licitação
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1691,6 +1708,27 @@ export default function LicitacaoCadastro() {
         onOpenChange={setBuscarPopupOpen}
         onLicitacaoEncontrada={handleLicitacaoEncontrada}
       />
+
+      {/* Popup de Exibir Licitação */}
+      <Dialog open={exibirPopupOpen} onOpenChange={setExibirPopupOpen}>
+        <DialogContent className="sm:max-w-[90vw] max-w-[90vw] w-[90vw] h-[90vh] p-0 gap-0">
+          <DialogHeader className="p-6 pb-4">
+            <DialogTitle className="text-xl font-semibold text-[#262626]">
+              Exibir Licitação
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 px-6 pb-6">
+            {formData.link_processo && (
+              <iframe
+                src={formData.link_processo}
+                className="w-full h-[calc(90vh-120px)] border border-gray-200 rounded-lg"
+                title="Licitação"
+                allowFullScreen
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }
