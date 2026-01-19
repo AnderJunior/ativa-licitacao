@@ -1405,6 +1405,7 @@ export default function LicitacaoCadastro() {
                   size="icon"
                   className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
                   type="button"
+                  onClick={handleLimpar}
                 >
                   ==
                 </Button>
