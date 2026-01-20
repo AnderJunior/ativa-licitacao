@@ -529,7 +529,7 @@ export default function LicitacaoCadastro() {
         ? `${data.num_ativa}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`
         : '';
 
-      // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra se disponível
+      // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra (nunca num_licitacao do banco)
       let numLicitacaoFormatado = '';
       if (sequencialCompra !== null && anoCompra !== null) {
         numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
@@ -678,7 +678,7 @@ export default function LicitacaoCadastro() {
       ? `${licitacao.num_ativa}.${String(new Date(licitacao.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(licitacao.created_at).getFullYear()).slice(-2)}`
       : '';
 
-    // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra se disponível
+    // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra (nunca num_licitacao do banco)
     let numLicitacaoFormatado = '';
     if (sequencialCompra !== null && anoCompra !== null) {
       numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
@@ -1511,16 +1511,26 @@ export default function LicitacaoCadastro() {
               <Label htmlFor="num_licitacao" className="text-sm font-normal text-[#262626]">Número</Label>
               <Input
                 id="num_licitacao"
-                placeholder="Digite o número (ex: 123/2024)"
-                value={formatarNumeroLicitacao()}
+                placeholder="Digite o número (ex: 02/2026)"
+                value={formData.num_licitacao || formatarNumeroLicitacao()}
                 onChange={(e) => {
                   const valor = e.target.value;
-                  const { sequencial, ano } = parsearNumeroLicitacao(valor);
+                  // Permite apenas números e "/"
+                  const valorLimpo = valor.replace(/[^\d\/]/g, '');
+                  
+                  // Limita a uma barra "/" apenas
+                  const partes = valorLimpo.split('/');
+                  let valorFormatado = partes[0] || '';
+                  if (partes.length > 1) {
+                    valorFormatado += '/' + partes.slice(1).join('').replace(/\//g, '');
+                  }
+                  
+                  const { sequencial, ano } = parsearNumeroLicitacao(valorFormatado);
                   setFormData({ 
                     ...formData, 
                     sequencial_compra: sequencial,
                     ano_compra: ano,
-                    num_licitacao: valor // Preserva o valor original digitado (incluindo zeros à esquerda e "/")
+                    num_licitacao: valorFormatado // Preserva o valor original digitado (incluindo zeros à esquerda e "/")
                   });
                 }}
                 className="h-9 bg-white"
