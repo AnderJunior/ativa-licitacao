@@ -96,6 +96,8 @@ export default function LicitacaoCadastro() {
   const [tipoSearchTerm, setTipoSearchTerm] = useState('');
   const [orgaoPopupOpen, setOrgaoPopupOpen] = useState(false);
   const [buscarOrgaoPopupOpen, setBuscarOrgaoPopupOpen] = useState(false);
+  const [termoInicialOrgao, setTermoInicialOrgao] = useState<string>('');
+  const [conteudoIgnorado, setConteudoIgnorado] = useState<string>(''); // Rastreia conteúdo que o usuário fechou o popup
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   
   // Estados para pesquisa por digitação
@@ -164,6 +166,74 @@ export default function LicitacaoCadastro() {
       }
     }
   }, [orgaos.length, formData.id, formData.orgao_pncp]);
+
+  // Detecta quando o texto do textarea corresponde apenas a um nome de órgão e abre o popup automaticamente
+  useEffect(() => {
+    // Só funciona se o popup não estiver aberto e houver órgãos carregados
+    if (buscarOrgaoPopupOpen || orgaos.length === 0) return;
+    
+    const conteudo = formData.conteudo || '';
+    const conteudoTrim = conteudo.trim();
+    
+    // Ignora se o conteúdo estiver vazio ou tiver múltiplas linhas
+    if (!conteudoTrim || conteudoTrim.includes('\n')) {
+      // Se o conteúdo mudou e não corresponde mais ao ignorado, limpa a flag
+      if (conteudoIgnorado && conteudoTrim !== conteudoIgnorado) {
+        setConteudoIgnorado('');
+      }
+      return;
+    }
+    
+    // Se o usuário já fechou o popup para este conteúdo, não reabre
+    const conteudoNormalizado = conteudoTrim.toLowerCase().replace(/\s+/g, ' ').trim();
+    const ignoradoNormalizado = conteudoIgnorado.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (conteudoNormalizado === ignoradoNormalizado && conteudoIgnorado) {
+      return;
+    }
+    
+    // Verifica se o conteúdo corresponde apenas a um nome de órgão (ou parte dele)
+    // Remove espaços extras e normaliza
+    
+    // Verifica se algum órgão corresponde ao texto digitado
+    const orgaoEncontrado = orgaos.find(orgao => {
+      const nomeOrgaoNormalizado = orgao.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
+      
+      // Verifica se o texto digitado corresponde exatamente ou é parte do nome do órgão
+      // E vice-versa: se o nome do órgão corresponde ao texto digitado
+      return nomeOrgaoNormalizado === conteudoNormalizado || 
+             nomeOrgaoNormalizado.startsWith(conteudoNormalizado) ||
+             conteudoNormalizado.startsWith(nomeOrgaoNormalizado);
+    });
+    
+    // Se encontrou um órgão e o texto corresponde apenas ao nome (sem outros caracteres)
+    if (orgaoEncontrado) {
+      const nomeOrgaoNormalizado = orgaoEncontrado.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
+      
+      // Verifica se o texto corresponde exatamente ou é uma parte inicial do nome do órgão
+      // E não contém outros caracteres além do nome do órgão
+      // Mínimo de 3 caracteres para evitar abertura muito precoce
+      if (nomeOrgaoNormalizado === conteudoNormalizado || 
+          (conteudoNormalizado.length >= 3 && nomeOrgaoNormalizado.startsWith(conteudoNormalizado))) {
+        // Usa um timeout para evitar abertura imediata enquanto o usuário está digitando
+        const timeoutId = setTimeout(() => {
+          // Verifica novamente se o conteúdo ainda corresponde (pode ter mudado)
+          const conteudoAtual = (formData.conteudo || '').trim();
+          const conteudoAtualNormalizado = conteudoAtual.toLowerCase().replace(/\s+/g, ' ').trim();
+          const ignoradoAtualNormalizado = conteudoIgnorado.toLowerCase().replace(/\s+/g, ' ').trim();
+          
+          // Não abre se o conteúdo foi ignorado ou se o popup já está aberto
+          if (conteudoAtual === conteudoTrim && 
+              !buscarOrgaoPopupOpen && 
+              conteudoAtualNormalizado !== ignoradoAtualNormalizado) {
+            setTermoInicialOrgao(conteudoTrim);
+            setBuscarOrgaoPopupOpen(true);
+          }
+        }, 500); // Aguarda 500ms após parar de digitar
+        
+        return () => clearTimeout(timeoutId);
+      }
+    }
+  }, [formData.conteudo, orgaos, buscarOrgaoPopupOpen, conteudoIgnorado]);
 
   // Atalho F2 para abrir popup de links
   useEffect(() => {
@@ -239,6 +309,17 @@ export default function LicitacaoCadastro() {
       // Permite letras, números e espaço
       if (e.key === ' ') {
         e.preventDefault();
+        
+        // Se houver uma atividade destacada, marca/desmarca o checkbox
+        if (highlightedAtividadeId) {
+          toggleRamo(highlightedAtividadeId);
+          // Limpa o buffer de pesquisa ao marcar
+          setSearchBuffer('');
+          if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+          }
+          return;
+        }
         
         // Limpa timeout anterior
         if (searchTimeoutRef.current) {
@@ -333,7 +414,7 @@ export default function LicitacaoCadastro() {
         clearTimeout(highlightTimeoutRef.current);
       }
     };
-  }, [searchBuffer, ramos]);
+  }, [searchBuffer, ramos, highlightedAtividadeId]);
 
   // Remove outline do viewport quando recebe foco
   useEffect(() => {
@@ -473,10 +554,18 @@ export default function LicitacaoCadastro() {
       .maybeSingle();
 
     if (data) {
-      // Formata o conteúdo no padrão se não tiver conteúdo formatado
-      const conteudoFormatado = data.conteudo?.includes('Local:') 
-        ? data.conteudo 
-        : formatarConteudoLicitacao(data);
+      // Se for cadastro Manual, usa o conteúdo diretamente sem formatação
+      // Se for PNCP, formata o conteúdo no padrão se não tiver conteúdo formatado
+      let conteudoFormatado = '';
+      if (data.tipo_cadastro === 'Manual') {
+        // Manual: usa o conteúdo direto do banco (pode estar em conteudo ou textos_cadastro_manual)
+        conteudoFormatado = data.textos_cadastro_manual || data.conteudo || '';
+      } else {
+        // PNCP: formata no padrão se não tiver conteúdo formatado
+        conteudoFormatado = data.conteudo?.includes('Local:') 
+          ? data.conteudo 
+          : formatarConteudoLicitacao(data);
+      }
 
       // Extrai sequencial_compra e ano_compra de num_licitacao se não existirem
       let sequencialCompra = data.sequencial_compra ?? null;
@@ -529,10 +618,28 @@ export default function LicitacaoCadastro() {
         ? `${data.num_ativa}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`
         : '';
 
-      // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra (nunca num_licitacao do banco)
+      // Formata num_licitacao baseado no tipo_cadastro:
+      // - Se tipo_cadastro = 'pncp': prioriza num_licitacao do banco (preserva zeros), senão usa sequencial_compra/ano_compra
+      // - Se tipo_cadastro = 'Manual': usa num_licitacao do banco
       let numLicitacaoFormatado = '';
-      if (sequencialCompra !== null && anoCompra !== null) {
-        numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+      if (data.tipo_cadastro === 'pncp') {
+        // PNCP: prioriza num_licitacao do banco (preserva zeros à esquerda se existir)
+        // Se não tiver no banco, monta de sequencial_compra/ano_compra
+        if (data.num_licitacao && data.num_licitacao.trim() !== '') {
+          numLicitacaoFormatado = data.num_licitacao;
+        } else if (sequencialCompra !== null && anoCompra !== null) {
+          numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+        }
+      } else if (data.tipo_cadastro === 'Manual') {
+        // Manual: usa num_licitacao do banco
+        numLicitacaoFormatado = data.num_licitacao || '';
+      } else {
+        // Fallback: prioriza num_licitacao do banco, senão tenta usar sequencial_compra/ano_compra
+        if (data.num_licitacao && data.num_licitacao.trim() !== '') {
+          numLicitacaoFormatado = data.num_licitacao;
+        } else if (sequencialCompra !== null && anoCompra !== null) {
+          numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+        }
       }
 
       // Mantém a UF selecionada: sempre usa a UF da licitação se existir
@@ -625,8 +732,16 @@ export default function LicitacaoCadastro() {
   };
 
   const handleLicitacaoEncontrada = async (licitacao: any, ramos: string[]) => {
-    // Formata o conteúdo no padrão
-    const conteudoFormatado = formatarConteudoLicitacao(licitacao);
+    // Se for cadastro Manual, usa o conteúdo diretamente sem formatação
+    // Se for PNCP, formata o conteúdo no padrão
+    let conteudoFormatado = '';
+    if (licitacao.tipo_cadastro === 'Manual') {
+      // Manual: usa o conteúdo direto do banco (pode estar em conteudo ou textos_cadastro_manual)
+      conteudoFormatado = licitacao.textos_cadastro_manual || licitacao.conteudo || '';
+    } else {
+      // PNCP: formata no padrão
+      conteudoFormatado = formatarConteudoLicitacao(licitacao);
+    }
 
     // Extrai sequencial_compra e ano_compra de num_licitacao se não existirem
     let sequencialCompra = licitacao.sequencial_compra ?? null;
@@ -678,10 +793,28 @@ export default function LicitacaoCadastro() {
       ? `${licitacao.num_ativa}.${String(new Date(licitacao.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(licitacao.created_at).getFullYear()).slice(-2)}`
       : '';
 
-    // Formata num_licitacao: SEMPRE usa sequencial_compra/ano_compra (nunca num_licitacao do banco)
+    // Formata num_licitacao baseado no tipo_cadastro:
+    // - Se tipo_cadastro = 'pncp': prioriza num_licitacao do banco (preserva zeros), senão usa sequencial_compra/ano_compra
+    // - Se tipo_cadastro = 'Manual': usa num_licitacao do banco
     let numLicitacaoFormatado = '';
-    if (sequencialCompra !== null && anoCompra !== null) {
-      numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+    if (licitacao.tipo_cadastro === 'pncp') {
+      // PNCP: prioriza num_licitacao do banco (preserva zeros à esquerda se existir)
+      // Se não tiver no banco, monta de sequencial_compra/ano_compra
+      if (licitacao.num_licitacao && licitacao.num_licitacao.trim() !== '') {
+        numLicitacaoFormatado = licitacao.num_licitacao;
+      } else if (sequencialCompra !== null && anoCompra !== null) {
+        numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+      }
+    } else if (licitacao.tipo_cadastro === 'Manual') {
+      // Manual: usa num_licitacao do banco
+      numLicitacaoFormatado = licitacao.num_licitacao || '';
+    } else {
+      // Fallback: prioriza num_licitacao do banco, senão tenta usar sequencial_compra/ano_compra
+      if (licitacao.num_licitacao && licitacao.num_licitacao.trim() !== '') {
+        numLicitacaoFormatado = licitacao.num_licitacao;
+      } else if (sequencialCompra !== null && anoCompra !== null) {
+        numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+      }
     }
 
     // Preenche o formulário com os dados da licitação encontrada
@@ -828,6 +961,16 @@ export default function LicitacaoCadastro() {
 
       // Cria objeto limpo com apenas os campos que devem ser salvos na tabela
       // modalidade e modalidade_ativa não são atualizados ao salvar (mantém valores originais)
+      // Para cadastros manuais, o conteúdo é salvo exatamente como está no textarea
+      let conteudoParaSalvar: string | null = null;
+      if (isCadastroManual) {
+        // Manual: salva exatamente o que está no textarea, sem formatação
+        conteudoParaSalvar = formData.conteudo || null;
+      } else {
+        // PNCP: mantém o conteúdo formatado (já vem formatado do banco ou foi formatado)
+        conteudoParaSalvar = formData.conteudo || null;
+      }
+
       const dataToSave: any = {
         ...formDataToSave,
         cd_pn: formData.pncp || null,
@@ -838,7 +981,8 @@ export default function LicitacaoCadastro() {
         dt_vinculo_ativa: dtVinculoAtiva,
         dt_alterado_ativa: dataAtual, // Sempre atualiza a data de alteração
         tipo_cadastro: tipoCadastro,
-        textos_cadastro_manual: isCadastroManual && formData.conteudo ? formData.conteudo : null,
+        conteudo: conteudoParaSalvar, // Conteúdo a ser salvo (formatado para PNCP, direto para Manual)
+        textos_cadastro_manual: isCadastroManual && conteudoParaSalvar ? conteudoParaSalvar : null,
         links: formData.links || [],
         link_processo: formData.link_processo || null,
         updated_at: dataAtual,
@@ -847,6 +991,16 @@ export default function LicitacaoCadastro() {
       // Adiciona num_ativa apenas para cadastros manuais (novas licitações)
       if (numAtivaParaSalvar !== null) {
         dataToSave.num_ativa = numAtivaParaSalvar;
+      }
+
+      // Garante que num_licitacao seja salvo com o valor formatado completo (preservando zeros à esquerda)
+      // Usa o valor digitado pelo usuário no campo (formData.num_licitacao) que já preserva os zeros
+      if (formData.num_licitacao && formData.num_licitacao.trim() !== '') {
+        dataToSave.num_licitacao = formData.num_licitacao.trim();
+      } else if (formData.sequencial_compra !== null && formData.ano_compra !== null) {
+        // Fallback: se não tiver num_licitacao formatado, monta a partir dos números
+        // Mas preserva os zeros à esquerda usando o valor original do campo se disponível
+        dataToSave.num_licitacao = `${formData.sequencial_compra}/${formData.ano_compra}`;
       }
 
       // Converte dt_publicacao de DD/MM/AAAA para YYYY-MM-DD (formato ISO) se existir
@@ -954,14 +1108,23 @@ export default function LicitacaoCadastro() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Verifica se é Ctrl+S (ou Cmd+S no Mac)
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        // Verifica se não está digitando em um input ou textarea
+        // Sempre previne o comportamento padrão (salvar página do navegador)
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Verifica se está digitando em um input ou textarea
         const activeElement = document.activeElement;
-        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-          // Se estiver em um input/textarea, permite o comportamento padrão (salvar página)
+        const isInputFocused = activeElement && (
+          activeElement.tagName === 'INPUT' || 
+          activeElement.tagName === 'TEXTAREA' ||
+          activeElement.getAttribute('contenteditable') === 'true'
+        );
+        
+        // Se estiver em um input/textarea, apenas previne o comportamento padrão mas não salva
+        // Isso permite que o usuário continue digitando sem salvar acidentalmente
+        if (isInputFocused) {
           return;
         }
-        
-        e.preventDefault();
         
         // Verifica se está salvando
         if (saving) {
@@ -994,8 +1157,8 @@ export default function LicitacaoCadastro() {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true); // Usa capture phase para interceptar antes
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [saving, formData.modalidade, formData.orgao_pncp, formData.sequencial_compra, formData.ano_compra, tipos, orgaos, handleSave]);
 
   const handleDelete = async () => {
@@ -1055,12 +1218,21 @@ export default function LicitacaoCadastro() {
   };
 
   const formatarNumeroLicitacao = (): string => {
-    // SEMPRE formata como sequencial_compra/ano_compra se disponível
-    const sequencial = formData.sequencial_compra;
-    const ano = formData.ano_compra;
-    if (sequencial !== null && sequencial !== undefined && ano !== null && ano !== undefined) {
-      return `${sequencial}/${ano}`;
+    // Sempre prioriza num_licitacao do formData (já formatado com zeros à esquerda se existir)
+    if (formData.num_licitacao && formData.num_licitacao.trim() !== '') {
+      return formData.num_licitacao;
     }
+    
+    // Fallback: se não tiver num_licitacao formatado, tenta montar de sequencial/ano
+    // Mas apenas como último recurso
+    if (formData.tipo_cadastro === 'pncp') {
+      const sequencial = formData.sequencial_compra;
+      const ano = formData.ano_compra;
+      if (sequencial !== null && sequencial !== undefined && ano !== null && ano !== undefined) {
+        return `${sequencial}/${ano}`;
+      }
+    }
+    // Retorna vazio se não conseguir formatar
     return '';
   };
 
@@ -1736,10 +1908,24 @@ export default function LicitacaoCadastro() {
       {/* Popup de Buscar Órgão */}
       <BuscarOrgaoPopup
         open={buscarOrgaoPopupOpen}
-        onOpenChange={setBuscarOrgaoPopupOpen}
+        onOpenChange={(open) => {
+          setBuscarOrgaoPopupOpen(open);
+          if (!open) {
+            // Quando o popup é fechado, marca o conteúdo atual como ignorado para não reabrir automaticamente
+            const conteudoAtual = (formData.conteudo || '').trim();
+            if (conteudoAtual) {
+              setConteudoIgnorado(conteudoAtual);
+            }
+            // Limpa o termo inicial quando o popup fecha
+            setTermoInicialOrgao('');
+          }
+        }}
         onOrgaoSelecionado={(orgao) => {
           setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
+          // Limpa o conteúdo ignorado quando um órgão é selecionado
+          setConteudoIgnorado('');
         }}
+        termoInicial={termoInicialOrgao}
       />
 
       {/* Popup de Exibir Licitação */}

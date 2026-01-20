@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Dialog,
@@ -31,6 +31,7 @@ interface BuscarOrgaoPopupProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onOrgaoSelecionado: (orgao: Orgao) => void;
+  termoInicial?: string;
 }
 
 const UFS = [
@@ -43,6 +44,7 @@ export function BuscarOrgaoPopup({
   open,
   onOpenChange,
   onOrgaoSelecionado,
+  termoInicial,
 }: BuscarOrgaoPopupProps) {
   const navigate = useNavigate();
   const [filtroOrgao, setFiltroOrgao] = useState('');
@@ -53,21 +55,9 @@ export function BuscarOrgaoPopup({
   const [orgaos, setOrgaos] = useState<Orgao[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [orgaoSelecionado, setOrgaoSelecionado] = useState<Orgao | null>(null);
+  const [termoInicialAplicado, setTermoInicialAplicado] = useState(false);
 
-  useEffect(() => {
-    if (!open) {
-      // Limpa os filtros quando fecha
-      setFiltroOrgao('');
-      setFiltroUASG('');
-      setFiltroCidade('');
-      setFiltroUF('');
-      setFiltroFone('');
-      setOrgaos([]);
-      setOrgaoSelecionado(null);
-    }
-  }, [open]);
-
-  const buscarOrgaos = async () => {
+  const buscarOrgaos = useCallback(async () => {
     setCarregando(true);
     try {
       let query = supabase
@@ -138,7 +128,30 @@ export function BuscarOrgaoPopup({
     } finally {
       setCarregando(false);
     }
-  };
+  }, [filtroOrgao, filtroUASG, filtroCidade, filtroUF, filtroFone]);
+
+  useEffect(() => {
+    if (!open) {
+      // Limpa os filtros quando fecha
+      setFiltroOrgao('');
+      setFiltroUASG('');
+      setFiltroCidade('');
+      setFiltroUF('');
+      setFiltroFone('');
+      setOrgaos([]);
+      setOrgaoSelecionado(null);
+      setTermoInicialAplicado(false); // Reseta a flag quando fecha
+    } else if (termoInicial && termoInicial.trim() && !termoInicialAplicado) {
+      // Se o popup abrir com um termo inicial e ainda não foi aplicado, preenche o filtro e busca automaticamente
+      setFiltroOrgao(termoInicial);
+      setTermoInicialAplicado(true); // Marca como aplicado para não sobrescrever se o usuário editar
+      // Usa um pequeno delay para garantir que o filtro foi atualizado antes de buscar
+      const timeoutId = setTimeout(() => {
+        buscarOrgaos();
+      }, 150);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [open, termoInicial, buscarOrgaos, termoInicialAplicado]);
 
   const handleBuscar = () => {
     buscarOrgaos();
