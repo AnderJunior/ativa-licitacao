@@ -18,6 +18,7 @@ import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon }
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LinksPopup } from '@/components/licitacoes/LinksPopup';
 import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPopup';
+import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -94,6 +95,7 @@ export default function LicitacaoCadastro() {
   const [tipoPopupOpen, setTipoPopupOpen] = useState(false);
   const [tipoSearchTerm, setTipoSearchTerm] = useState('');
   const [orgaoPopupOpen, setOrgaoPopupOpen] = useState(false);
+  const [buscarOrgaoPopupOpen, setBuscarOrgaoPopupOpen] = useState(false);
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   
   // Estados para pesquisa por digitação
@@ -1573,52 +1575,63 @@ export default function LicitacaoCadastro() {
           {/* Seção Órgão */}
           <div className="flex-1 flex flex-col min-h-0">
             <Label htmlFor="orgao" className="text-sm font-normal mb-2 block text-[#262626]">Orgão</Label>
-            <Popover open={orgaoPopupOpen} onOpenChange={setOrgaoPopupOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={orgaoPopupOpen}
-                  className="h-9 w-full justify-between font-normal mb-2 bg-white"
-                >
-                  {formData.orgao_pncp
-                    ? (() => {
-                        const orgaoEncontrado = orgaos.find((orgao) => orgao.id === formData.orgao_pncp || orgao.nome_orgao === formData.orgao_pncp);
-                        return orgaoEncontrado ? orgaoEncontrado.nome_orgao : formData.orgao_pncp;
-                      })()
-                    : "Selecione o Orgão"}
-                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Buscar orgão..." />
-                  <CommandList>
-                    <CommandEmpty>Nenhum orgão encontrado.</CommandEmpty>
-                    <CommandGroup className="p-0">
-                      {orgaos.map((orgao) => (
-                        <CommandItem
-                          key={orgao.id}
-                          value={orgao.nome_orgao}
-                          onSelect={() => {
-                            setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
-                            setOrgaoPopupOpen(false);
-                          }}
-                          className={cn(
-                            "px-3 py-2 rounded-none cursor-pointer",
-                            (formData.orgao_pncp === orgao.nome_orgao || formData.orgao_pncp === orgao.id)
-                              ? "!bg-[#02572E]/10 !text-[#02572E]"
-                              : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
-                          )}
-                        >
-                          {orgao.nome_orgao}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <div className="flex gap-2 mb-2">
+              <Popover open={orgaoPopupOpen} onOpenChange={setOrgaoPopupOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={orgaoPopupOpen}
+                    className="h-9 flex-1 justify-between font-normal bg-white"
+                  >
+                    {formData.orgao_pncp
+                      ? (() => {
+                          const orgaoEncontrado = orgaos.find((orgao) => orgao.id === formData.orgao_pncp || orgao.nome_orgao === formData.orgao_pncp);
+                          return orgaoEncontrado ? orgaoEncontrado.nome_orgao : formData.orgao_pncp;
+                        })()
+                      : "Selecione o Orgão"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar orgão..." />
+                    <CommandList>
+                      <CommandEmpty>Nenhum orgão encontrado.</CommandEmpty>
+                      <CommandGroup className="p-0">
+                        {orgaos.map((orgao) => (
+                          <CommandItem
+                            key={orgao.id}
+                            value={orgao.nome_orgao}
+                            onSelect={() => {
+                              setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
+                              setOrgaoPopupOpen(false);
+                            }}
+                            className={cn(
+                              "px-3 py-2 rounded-none cursor-pointer",
+                              (formData.orgao_pncp === orgao.nome_orgao || formData.orgao_pncp === orgao.id)
+                                ? "!bg-[#02572E]/10 !text-[#02572E]"
+                                : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                            )}
+                          >
+                            {orgao.nome_orgao}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+              <Button
+                variant="secondary"
+                size="icon"
+                className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                type="button"
+                onClick={() => setBuscarOrgaoPopupOpen(true)}
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+            </div>
             <Textarea
               id="conteudo"
               value={formData.conteudo || ''}
@@ -1708,6 +1721,15 @@ export default function LicitacaoCadastro() {
         open={buscarPopupOpen}
         onOpenChange={setBuscarPopupOpen}
         onLicitacaoEncontrada={handleLicitacaoEncontrada}
+      />
+
+      {/* Popup de Buscar Órgão */}
+      <BuscarOrgaoPopup
+        open={buscarOrgaoPopupOpen}
+        onOpenChange={setBuscarOrgaoPopupOpen}
+        onOrgaoSelecionado={(orgao) => {
+          setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
+        }}
       />
 
       {/* Popup de Exibir Licitação */}
