@@ -1191,8 +1191,12 @@ export default function LicitacaoCadastro() {
         textos_cadastro_manual: isCadastroManual && conteudoParaSalvar ? conteudoParaSalvar : null,
         links: formData.links || [],
         link_processo: formData.link_processo || null,
-        updated_at: dataAtual,
       };
+
+      // Atualiza updated_at automaticamente quando cadastrado = true
+      if (dataToSave.cadastrado === true) {
+        dataToSave.updated_at = dataAtual;
+      }
 
       // Adiciona num_ativa apenas para cadastros manuais (novas licitações)
       if (numAtivaParaSalvar !== null) {
@@ -1250,6 +1254,11 @@ export default function LicitacaoCadastro() {
         // Remove num_ativa se estiver presente no dataToSave
         delete dataToSave.num_ativa;
         
+        // Garante que updated_at seja sempre atualizado quando cadastrado = true
+        if (dataToSave.cadastrado === true) {
+          dataToSave.updated_at = dataAtual;
+        }
+        
         const { error } = await supabase
           .from('contratacoes')
           .update(dataToSave)
@@ -1257,6 +1266,11 @@ export default function LicitacaoCadastro() {
         if (error) throw error;
         contratacaoIdToUse = licitacaoId;
       } else {
+        // Garante que updated_at seja sempre atualizado quando cadastrado = true
+        if (dataToSave.cadastrado === true) {
+          dataToSave.updated_at = dataAtual;
+        }
+        
         const { data, error } = await supabase
           .from('contratacoes')
           .insert(dataToSave)
@@ -1466,21 +1480,58 @@ export default function LicitacaoCadastro() {
 
   const handlePuxarOrgaoUltimaLicitacao = async () => {
     try {
+      // Busca a última licitação cadastrada ordenando por updated_at (sempre atualizado quando cadastrado = true)
+      // Se não tiver updated_at, ordena por dt_alterado_ativa, depois por dt_vinculo_ativa, depois por created_at
       const { data, error } = await supabase
         .from('contratacoes')
-        .select('orgao_pncp')
+        .select('orgao_pncp, updated_at, dt_alterado_ativa, dt_vinculo_ativa, created_at')
         .eq('cadastrado', true)
-        .order('created_at', { ascending: false })
+        .not('orgao_pncp', 'is', null)
+        .order('updated_at', { ascending: false, nullsFirst: false })
         .limit(1)
         .maybeSingle();
 
       if (error) throw error;
 
-      if (data && data.orgao_pncp) {
+      if (data && data.orgao_pncp && data.orgao_pncp.trim() !== '') {
         setFormData({ ...formData, orgao_pncp: data.orgao_pncp });
         toast.success('Órgão da última licitação cadastrada preenchido!');
       } else {
-        toast.warning('Nenhuma licitação cadastrada encontrada.');
+        // Fallback: tenta buscar por dt_alterado_ativa se não encontrou por updated_at
+        const { data: dataFallback, error: errorFallback } = await supabase
+          .from('contratacoes')
+          .select('orgao_pncp')
+          .eq('cadastrado', true)
+          .not('orgao_pncp', 'is', null)
+          .order('dt_alterado_ativa', { ascending: false, nullsFirst: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (errorFallback) throw errorFallback;
+
+        if (dataFallback && dataFallback.orgao_pncp && dataFallback.orgao_pncp.trim() !== '') {
+          setFormData({ ...formData, orgao_pncp: dataFallback.orgao_pncp });
+          toast.success('Órgão da última licitação cadastrada preenchido!');
+        } else {
+          // Último fallback: busca por created_at
+          const { data: dataCreated, error: errorCreated } = await supabase
+            .from('contratacoes')
+            .select('orgao_pncp')
+            .eq('cadastrado', true)
+            .not('orgao_pncp', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (errorCreated) throw errorCreated;
+
+          if (dataCreated && dataCreated.orgao_pncp && dataCreated.orgao_pncp.trim() !== '') {
+            setFormData({ ...formData, orgao_pncp: dataCreated.orgao_pncp });
+            toast.success('Órgão da última licitação cadastrada preenchido!');
+          } else {
+            toast.warning('Nenhuma licitação cadastrada encontrada.');
+          }
+        }
       }
     } catch (error: any) {
       toast.error('Erro ao buscar última licitação: ' + error.message);
