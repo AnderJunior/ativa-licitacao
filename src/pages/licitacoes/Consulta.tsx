@@ -150,9 +150,27 @@ export default function LicitacaoConsulta() {
     loadContratacoes();
   };
 
+  // Converte string ISO (YYYY-MM-DD) para DD/MM/AAAA sem problemas de fuso horário
+  const formatarDataISO = (dataISO: string | null): string => {
+    if (!dataISO || dataISO.trim() === '') return '-';
+    
+    // Parse manual da string ISO para evitar problemas de fuso horário
+    const partes = dataISO.split('T')[0].split('-'); // Pega apenas a parte da data (antes do T)
+    if (partes.length !== 3) return '-';
+    
+    const ano = parseInt(partes[0]);
+    const mes = parseInt(partes[1]);
+    const dia = parseInt(partes[2]);
+    
+    if (isNaN(ano) || isNaN(mes) || isNaN(dia)) return '-';
+    
+    // Formata como DD/MM/AAAA
+    return `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`;
+  };
+
   const formatDate = (date: string | null) => {
     if (!date) return '-';
-    return new Date(date).toLocaleDateString('pt-BR');
+    return formatarDataISO(date);
   };
 
   const formatCurrency = (value: number | null) => {
@@ -315,7 +333,7 @@ export default function LicitacaoConsulta() {
                         {c.orgao_pncp || '-'}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">
-                        {formatDate(c.dt_publicacao)}
+                        {formatDate(c.dt_encerramento_proposta)}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">
                         {c.n_relatorio || '-'}
@@ -362,7 +380,7 @@ export default function LicitacaoConsulta() {
                       <td className="p-4 align-middle">{c.uf || '-'}</td>
                       <td className="p-4 align-middle max-w-xs truncate">{c.orgao_pncp || '-'}</td>
                       <td className="p-4 align-middle">{c.num_licitacao || '-'}</td>
-                      <td className="p-4 align-middle">{formatDate(c.dt_publicacao)}</td>
+                      <td className="p-4 align-middle">{formatDate(c.dt_encerramento_proposta)}</td>
                       <td className="p-4 align-middle">{formatCurrency(c.valor_estimado)}</td>
                       <td className="p-4 align-middle">
                         <Button

@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { SidebarProvider } from "@/contexts/SidebarContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 import Auth from "./pages/Auth";
@@ -21,24 +22,26 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/" element={<ProtectedRoute><Navigate to="/licitacoes/cadastro" replace /></ProtectedRoute>} />
-            <Route path="/licitacoes/cadastro" element={<ProtectedRoute><LicitacaoCadastro /></ProtectedRoute>} />
-            <Route path="/licitacoes/consulta" element={<ProtectedRoute><LicitacaoConsulta /></ProtectedRoute>} />
-            <Route path="/licitacoes/tipos" element={<ProtectedRoute><LicitacaoTipos /></ProtectedRoute>} />
-            <Route path="/licitacoes/marcacoes-pendentes" element={<ProtectedRoute><MarcacoesPendentes /></ProtectedRoute>} />
-            <Route path="/orgaos/cadastro" element={<ProtectedRoute><OrgaoCadastro /></ProtectedRoute>} />
-            <Route path="/orgaos/sem-ibge" element={<ProtectedRoute><OrgaosSemIBGE /></ProtectedRoute>} />
-            <Route path="/orgaos/agrupamentos" element={<ProtectedRoute><OrgaosAgrupamentos /></ProtectedRoute>} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
+      <SidebarProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/" element={<ProtectedRoute><Navigate to="/licitacoes/cadastro" replace /></ProtectedRoute>} />
+              <Route path="/licitacoes/cadastro" element={<ProtectedRoute><LicitacaoCadastro /></ProtectedRoute>} />
+              <Route path="/licitacoes/consulta" element={<ProtectedRoute><LicitacaoConsulta /></ProtectedRoute>} />
+              <Route path="/licitacoes/tipos" element={<ProtectedRoute><LicitacaoTipos /></ProtectedRoute>} />
+              <Route path="/licitacoes/marcacoes-pendentes" element={<ProtectedRoute><MarcacoesPendentes /></ProtectedRoute>} />
+              <Route path="/orgaos/cadastro" element={<ProtectedRoute><OrgaoCadastro /></ProtectedRoute>} />
+              <Route path="/orgaos/sem-ibge" element={<ProtectedRoute><OrgaosSemIBGE /></ProtectedRoute>} />
+              <Route path="/orgaos/agrupamentos" element={<ProtectedRoute><OrgaosAgrupamentos /></ProtectedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </SidebarProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

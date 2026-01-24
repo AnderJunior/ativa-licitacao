@@ -51,8 +51,6 @@ export default function OrgaoCadastro() {
     nome_orgao: '',
     uf: '',
     cidade_ibge: '',
-    endereco: '',
-    telefone: '',
     compras_net: '',
     compras_mg: '',
     emails: [],
@@ -140,8 +138,6 @@ export default function OrgaoCadastro() {
             nome_orgao: formData.nome_orgao,
             uf: formData.uf || null,
             cidade_ibge: formData.cidade_ibge || null,
-            endereco: formData.endereco || null,
-            telefone: formData.telefone || null,
             compras_net: formData.compras_net || null,
             compras_mg: formData.compras_mg || null,
             emails: formData.emails || [],
@@ -158,8 +154,6 @@ export default function OrgaoCadastro() {
             nome_orgao: formData.nome_orgao,
             uf: formData.uf || null,
             cidade_ibge: formData.cidade_ibge || null,
-            endereco: formData.endereco || null,
-            telefone: formData.telefone || null,
             compras_net: formData.compras_net || null,
             compras_mg: formData.compras_mg || null,
             emails: formData.emails || [],
@@ -193,8 +187,6 @@ export default function OrgaoCadastro() {
           nome_orgao: '',
           uf: '',
           cidade_ibge: '',
-          endereco: '',
-          telefone: '',
           compras_net: '',
           compras_mg: '',
           emails: [],
@@ -379,7 +371,35 @@ export default function OrgaoCadastro() {
               </PopoverTrigger>
               <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
-                  <CommandInput placeholder="Buscar grupo..." />
+                  <CommandInput 
+                    placeholder="Buscar grupo..." 
+                    onKeyDown={(e) => {
+                      if (e.key === 'Tab' && !e.shiftKey) {
+                        e.preventDefault();
+                        // Encontra o item destacado na lista (cmdk usa data-selected ou aria-selected)
+                        const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
+                        if (selectedItem) {
+                          // Dispara o evento de seleção
+                          selectedItem.click();
+                        } else {
+                          // Se não houver item destacado, seleciona o primeiro da lista
+                          const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
+                          if (firstItem) {
+                            firstItem.click();
+                          }
+                        }
+                        // Fecha o popover
+                        setGrupoPopupOpen(false);
+                        // Avança para o próximo campo
+                        setTimeout(() => {
+                          const nextInput = document.querySelector('input[type="text"], textarea, input[type="number"], input[type="email"], input[type="url"]') as HTMLElement;
+                          if (nextInput) {
+                            nextInput.focus();
+                          }
+                        }, 100);
+                      }
+                    }}
+                  />
                   <CommandList>
                     <CommandEmpty>Nenhum grupo encontrado.</CommandEmpty>
                     <CommandGroup className="p-0">
@@ -409,33 +429,33 @@ export default function OrgaoCadastro() {
           </div>
         </div>
 
-        {/* Linha 3: Endereço, Telefone, E-mails */}
+        {/* Linha 3: Orgão (textarea), PNCP (textarea), E-mails */}
         <div className="grid grid-cols-12 gap-4 mb-[12px]">
-          <div className="col-span-5 space-y-0.5">
-            <Label htmlFor="endereco" className="text-[14px] font-normal text-[#262626]">Endereço</Label>
-            <Input
-              id="endereco"
-              placeholder="Endereço do Orgão"
-              value={formData.endereco || ''}
-              onChange={(e) => setFormData({ ...formData, endereco: e.target.value })}
-              className="h-9 bg-white"
+          <div className="col-span-4 space-y-0.5">
+            <Label htmlFor="observacoes" className="text-[14px] font-normal text-[#262626]">Orgão</Label>
+            <Textarea
+              id="observacoes"
+              placeholder="Adicione anotações do Orgão"
+              value={formData.observacoes || ''}
+              onChange={(e) => setFormData({ ...formData, observacoes: e.target.value })}
+              className="resize-none h-[142px] text-[14px] bg-white"
               disabled={isViewMode}
             />
           </div>
-          <div className="col-span-2 space-y-0.5">
-            <Label htmlFor="telefone" className="text-[14px] font-normal text-[#262626]">Telefone</Label>
-            <Input
-              id="telefone"
-              placeholder="Digite o telefone"
-              value={formData.telefone || ''}
-              onChange={(e) => setFormData({ ...formData, telefone: e.target.value })}
-              className="h-9 bg-white"
+          <div className="col-span-3 space-y-0.5">
+            <Label htmlFor="obs_pncp" className="text-[14px] font-normal text-[#262626]">PNCP</Label>
+            <Textarea
+              id="obs_pncp"
+              placeholder="Adicione anotações do Orgão"
+              value={formData.obs_pncp || ''}
+              onChange={(e) => setFormData({ ...formData, obs_pncp: e.target.value })}
+              className="resize-none h-[142px] text-[14px] bg-white"
               disabled={isViewMode}
             />
           </div>
-          <div className="col-span-5 space-y-0.5">
+          <div className="col-span-5">
             <Label className="text-[14px] font-normal text-[#262626]">E-mails</Label>
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-1 mb-[12px]">
               <Input
                 type="email"
                 placeholder="Digite o E-mail"
@@ -456,36 +476,8 @@ export default function OrgaoCadastro() {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
-          </div>
-        </div>
-
-        {/* Linha 4: Orgão (textarea), PNCP (textarea), área de emails */}
-        <div className="grid grid-cols-12 gap-4 mb-[12px]">
-          <div className="col-span-4 space-y-0.5">
-            <Label htmlFor="observacoes" className="text-[14px] font-normal text-[#262626]">Orgão</Label>
-            <Textarea
-              id="observacoes"
-              placeholder="Adicione anotações do Orgão"
-              value={formData.observacoes || ''}
-              onChange={(e) => setFormData({ ...formData, observacoes: e.target.value })}
-              className="resize-none h-[120px] text-[14px] bg-white"
-              disabled={isViewMode}
-            />
-          </div>
-          <div className="col-span-3 space-y-0.5">
-            <Label htmlFor="obs_pncp" className="text-[14px] font-normal text-[#262626]">PNCP</Label>
-            <Textarea
-              id="obs_pncp"
-              placeholder="Adicione anotações do Orgão"
-              value={formData.obs_pncp || ''}
-              onChange={(e) => setFormData({ ...formData, obs_pncp: e.target.value })}
-              className="resize-none h-[120px] text-[14px] bg-white"
-              disabled={isViewMode}
-            />
-          </div>
-          {/* Área pontilhada para emails - alinhada com a coluna de E-mails acima (5 colunas) */}
-          <div className="col-span-5">
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-3 h-full min-h-[140px]">
+            {/* Área pontilhada para emails */}
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-3 h-[90px]">
               <div className="flex flex-wrap gap-2">
                 {(formData.emails || []).map((email, index) => (
                   <span key={index} className="inline-flex items-center gap-1 bg-muted px-2 py-1 rounded text-xs">

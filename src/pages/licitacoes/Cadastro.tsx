@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
@@ -11,10 +11,11 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon } from 'lucide-react';
+import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LinksPopup } from '@/components/licitacoes/LinksPopup';
 import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPopup';
@@ -92,6 +93,8 @@ export default function LicitacaoCadastro() {
   const [linksPopupOpen, setLinksPopupOpen] = useState(false);
   const [buscarPopupOpen, setBuscarPopupOpen] = useState(false);
   const [exibirPopupOpen, setExibirPopupOpen] = useState(false);
+  const [pncpPopupOpen, setPncpPopupOpen] = useState(false);
+  const [pncpSearchTerm, setPncpSearchTerm] = useState('');
   const [tipoPopupOpen, setTipoPopupOpen] = useState(false);
   const [tipoSearchTerm, setTipoSearchTerm] = useState('');
   const [orgaoPopupOpen, setOrgaoPopupOpen] = useState(false);
@@ -99,6 +102,7 @@ export default function LicitacaoCadastro() {
   const [termoInicialOrgao, setTermoInicialOrgao] = useState<string>('');
   const [conteudoIgnorado, setConteudoIgnorado] = useState<string>(''); // Rastreia conteúdo que o usuário fechou o popup
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   
   // Estados para pesquisa por digitação
   const [searchBuffer, setSearchBuffer] = useState('');
@@ -107,6 +111,12 @@ export default function LicitacaoCadastro() {
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastKeyTimeRef = useRef<number>(0);
   const atividadesScrollRef = useRef<HTMLDivElement>(null);
+  // Map para rastrear últimos tempos de seleção e evitar múltiplas chamadas
+  const lastSelectTimeMap = useRef<Map<string, number>>(new Map());
+  // Refs para focar nos inputs de pesquisa quando os dropdowns abrirem
+  const pncpSearchInputRef = useRef<HTMLInputElement>(null);
+  const tipoSearchInputRef = useRef<HTMLInputElement>(null);
+  const orgaoSearchInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState<Partial<Contratacao>>({
     num_ativa: '',
@@ -134,6 +144,161 @@ export default function LicitacaoCadastro() {
     }
   }, [contratacaoId]);
 
+
+  // Foca no input de pesquisa quando o dropdown de PNCP abrir
+  useEffect(() => {
+    if (pncpPopupOpen && pncpSearchInputRef.current) {
+      const timeoutId = setTimeout(() => {
+        pncpSearchInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [pncpPopupOpen]);
+
+  // Abre o popover de PNCP quando recebe foco via TAB (não via clique)
+  useEffect(() => {
+    const pncpButton = document.querySelector('[role="combobox"][tabindex="1"]') as HTMLElement;
+    if (!pncpButton) return;
+
+    const handleFocus = (e: FocusEvent) => {
+      // Verifica se o foco veio de um clique ou de TAB
+      const wasClick = (e as any).detail === 0 || (e as any).relatedTarget === null;
+      if (!wasClick && !pncpPopupOpen) {
+        // Foco veio via TAB, abre o popover
+        setPncpPopupOpen(true);
+      }
+    };
+
+    pncpButton.addEventListener('focus', handleFocus);
+    return () => pncpButton.removeEventListener('focus', handleFocus);
+  }, [pncpPopupOpen]);
+
+  // Foca no input de pesquisa quando o dropdown de tipo abrir
+  useEffect(() => {
+    if (tipoPopupOpen) {
+      // Delay maior para garantir que o popover e o input estejam totalmente renderizados
+      const timeoutId = setTimeout(() => {
+        // Tenta usar a ref primeiro
+        if (tipoSearchInputRef.current) {
+          tipoSearchInputRef.current.focus();
+        } else {
+          // Fallback: busca o input no DOM
+          const input = document.querySelector('[cmdk-input]') as HTMLInputElement;
+          if (input) {
+            input.focus();
+          }
+        }
+      }, 200);
+      
+      // Tenta focar novamente após um delay adicional para garantir
+      const timeoutId2 = setTimeout(() => {
+        if (tipoSearchInputRef.current) {
+          tipoSearchInputRef.current.focus();
+        } else {
+          const input = document.querySelector('[cmdk-input]') as HTMLInputElement;
+          if (input) {
+            input.focus();
+          }
+        }
+      }, 300);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        clearTimeout(timeoutId2);
+      };
+    }
+  }, [tipoPopupOpen]);
+
+  // Abre o popover de Tipo quando recebe foco via TAB (não via clique)
+  useEffect(() => {
+    const tipoButton = document.querySelector('[role="combobox"][tabindex="2"]') as HTMLElement;
+    if (!tipoButton) return;
+
+    const handleFocus = (e: FocusEvent) => {
+      // Verifica se o foco veio de um clique ou de TAB
+      // Se relatedTarget existe, provavelmente veio de outro elemento (TAB)
+      const cameFromTab = e.relatedTarget !== null;
+      if (cameFromTab && !tipoPopupOpen) {
+        // Foco veio via TAB, abre o popover
+        setTipoPopupOpen(true);
+        // Aguarda o popover abrir e foca no input
+        setTimeout(() => {
+          if (tipoSearchInputRef.current) {
+            tipoSearchInputRef.current.focus();
+          }
+        }, 200);
+      }
+    };
+
+    tipoButton.addEventListener('focus', handleFocus);
+    return () => tipoButton.removeEventListener('focus', handleFocus);
+  }, [tipoPopupOpen]);
+
+  // Foca no input de pesquisa quando o dropdown de órgão abrir
+  useEffect(() => {
+    if (orgaoPopupOpen) {
+      // Delay maior para garantir que o popover e o input estejam totalmente renderizados
+      const timeoutId = setTimeout(() => {
+        // Tenta usar a ref primeiro
+        if (orgaoSearchInputRef.current) {
+          orgaoSearchInputRef.current.focus();
+        } else {
+          // Fallback: busca o input no DOM
+          const input = document.querySelector('[cmdk-input]') as HTMLInputElement;
+          if (input) {
+            input.focus();
+          }
+        }
+      }, 200);
+      
+      // Tenta focar novamente após um delay adicional para garantir
+      const timeoutId2 = setTimeout(() => {
+        if (orgaoSearchInputRef.current) {
+          orgaoSearchInputRef.current.focus();
+        } else {
+          const input = document.querySelector('[cmdk-input]') as HTMLInputElement;
+          if (input) {
+            input.focus();
+          }
+        }
+      }, 300);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        clearTimeout(timeoutId2);
+      };
+    }
+  }, [orgaoPopupOpen]);
+
+  // Abre o popover de Órgão quando recebe foco via TAB (não via clique)
+  useEffect(() => {
+    const orgaoButton = document.querySelector('[role="combobox"][tabindex="5"]') as HTMLElement;
+    if (!orgaoButton) return;
+
+    const handleFocus = (e: FocusEvent) => {
+      // Verifica se o foco veio de um clique ou de TAB
+      // Se relatedTarget existe, provavelmente veio de outro elemento (TAB)
+      const cameFromTab = e.relatedTarget !== null;
+      if (cameFromTab && !orgaoPopupOpen) {
+        // Foco veio via TAB, abre o popover
+        setOrgaoPopupOpen(true);
+        // Aguarda o popover abrir e foca no input
+        setTimeout(() => {
+          if (orgaoSearchInputRef.current) {
+            orgaoSearchInputRef.current.focus();
+          } else {
+            const input = document.querySelector('[cmdk-input]') as HTMLInputElement;
+            if (input) {
+              input.focus();
+            }
+          }
+        }, 200);
+      }
+    };
+
+    orgaoButton.addEventListener('focus', handleFocus);
+    return () => orgaoButton.removeEventListener('focus', handleFocus);
+  }, [orgaoPopupOpen]);
 
   // Valida o orgão quando os orgãos são carregados e há uma licitação com orgão preenchido
   useEffect(() => {
@@ -490,8 +655,40 @@ export default function LicitacaoCadastro() {
   const formatarConteudoLicitacao = (licitacao: any): string => {
     const formatarDataHora = (data: string | null) => {
       if (!data) return 'Não informado';
-      const d = new Date(data);
-      return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} (horário de Brasília)`;
+      
+      // Parse manual da data para evitar problemas de timezone
+      // Formato esperado: YYYY-MM-DDTHH:mm:ss ou YYYY-MM-DDTHH:mm:ss-03:00
+      const partes = data.split('T');
+      if (partes.length < 2) {
+        // Se não tiver hora, assume apenas data
+        const partesData = data.split('-');
+        if (partesData.length === 3) {
+          const dia = partesData[2].padStart(2, '0');
+          const mes = partesData[1].padStart(2, '0');
+          const ano = partesData[0];
+          return `${dia}/${mes}/${ano}`;
+        }
+        return 'Não informado';
+      }
+      
+      const dataParte = partes[0]; // YYYY-MM-DD
+      const horaParte = partes[1]; // HH:mm:ss ou HH:mm:ss-03:00
+      
+      // Extrai apenas a hora e minuto (ignora segundos e timezone)
+      const horaMinuto = horaParte.split(':');
+      const hora = horaMinuto[0]?.padStart(2, '0') || '21';
+      const minuto = horaMinuto[1]?.padStart(2, '0') || '00';
+      
+      // Parse da data (YYYY-MM-DD)
+      const partesData = dataParte.split('-');
+      if (partesData.length === 3) {
+        const dia = partesData[2].padStart(2, '0');
+        const mes = partesData[1].padStart(2, '0');
+        const ano = partesData[0];
+        return `${dia}/${mes}/${ano}`;
+      }
+      
+      return 'Não informado';
     };
 
     const formatarValor = (valor: number | null) => {
@@ -547,6 +744,17 @@ export default function LicitacaoCadastro() {
 
   const loadContratacao = async (id: string) => {
     setLoading(true);
+    
+    // Verifica se deve preencher o número automaticamente
+    const naoPreencherNumero = searchParams.get('naoPreencherNumero') === 'true';
+    
+    // Remove o parâmetro da URL após ler
+    if (naoPreencherNumero) {
+      const newSearchParams = new URLSearchParams(searchParams);
+      newSearchParams.delete('naoPreencherNumero');
+      setSearchParams(newSearchParams, { replace: true });
+    }
+    
     const { data, error } = await supabase
       .from('contratacoes')
       .select('*')
@@ -619,26 +827,26 @@ export default function LicitacaoCadastro() {
         : '';
 
       // Formata num_licitacao baseado no tipo_cadastro:
-      // - Se tipo_cadastro = 'pncp': prioriza num_licitacao do banco (preserva zeros), senão usa sequencial_compra/ano_compra
+      // - Se tipo_cadastro = 'pncp': SEMPRE usa sequencial_compra/ano_compra
       // - Se tipo_cadastro = 'Manual': usa num_licitacao do banco
+      // - Se naoPreencherNumero = true: não preenche o número (deixa vazio)
       let numLicitacaoFormatado = '';
-      if (data.tipo_cadastro === 'pncp') {
-        // PNCP: prioriza num_licitacao do banco (preserva zeros à esquerda se existir)
-        // Se não tiver no banco, monta de sequencial_compra/ano_compra
-        if (data.num_licitacao && data.num_licitacao.trim() !== '') {
-          numLicitacaoFormatado = data.num_licitacao;
-        } else if (sequencialCompra !== null && anoCompra !== null) {
-          numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
-        }
-      } else if (data.tipo_cadastro === 'Manual') {
-        // Manual: usa num_licitacao do banco
-        numLicitacaoFormatado = data.num_licitacao || '';
-      } else {
-        // Fallback: prioriza num_licitacao do banco, senão tenta usar sequencial_compra/ano_compra
-        if (data.num_licitacao && data.num_licitacao.trim() !== '') {
-          numLicitacaoFormatado = data.num_licitacao;
-        } else if (sequencialCompra !== null && anoCompra !== null) {
-          numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+      if (!naoPreencherNumero) {
+        if (data.tipo_cadastro === 'pncp') {
+          // PNCP: SEMPRE usa sequencial_compra/ano_compra
+          if (sequencialCompra !== null && anoCompra !== null) {
+            numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+          }
+        } else if (data.tipo_cadastro === 'Manual') {
+          // Manual: usa num_licitacao do banco
+          numLicitacaoFormatado = data.num_licitacao || '';
+        } else {
+          // Fallback: se não tiver tipo_cadastro definido, tenta usar sequencial_compra/ano_compra
+          if (sequencialCompra !== null && anoCompra !== null) {
+            numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+          } else if (data.num_licitacao && data.num_licitacao.trim() !== '') {
+            numLicitacaoFormatado = data.num_licitacao;
+          }
         }
       }
 
@@ -654,14 +862,14 @@ export default function LicitacaoCadastro() {
         modalidade: tipoId || '', // Usa apenas o tipo que vem do banco
         descricao_modalidade: tipoId || null,
         orgao_pncp: orgaoValido,
-        dt_publicacao: data.dt_publicacao 
-          ? new Date(data.dt_publicacao).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        dt_publicacao: data.dt_encerramento_proposta 
+          ? formatarDataISO(data.dt_encerramento_proposta)
           : new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
         link_processo: data.link_processo || null,
         links: data.links || [],
         conteudo: conteudoFormatado,
-        sequencial_compra: sequencialCompra,
-        ano_compra: anoCompra,
+        sequencial_compra: naoPreencherNumero ? null : sequencialCompra,
+        ano_compra: naoPreencherNumero ? null : anoCompra,
         num_licitacao: numLicitacaoFormatado,
       });
       // Load marcações
@@ -720,7 +928,8 @@ export default function LicitacaoCadastro() {
       }
 
       // Navega para a URL com o ID da licitação encontrada
-      navigate(`/licitacoes/cadastro?id=${data.id}`);
+      // Adiciona parâmetro para indicar que não deve preencher o número automaticamente
+      navigate(`/licitacoes/cadastro?id=${data.id}&naoPreencherNumero=true`);
       // O useEffect vai detectar a mudança no contratacaoId e carregar a licitação automaticamente
       
     } catch (error) {
@@ -794,26 +1003,23 @@ export default function LicitacaoCadastro() {
       : '';
 
     // Formata num_licitacao baseado no tipo_cadastro:
-    // - Se tipo_cadastro = 'pncp': prioriza num_licitacao do banco (preserva zeros), senão usa sequencial_compra/ano_compra
+    // - Se tipo_cadastro = 'pncp': SEMPRE usa sequencial_compra/ano_compra
     // - Se tipo_cadastro = 'Manual': usa num_licitacao do banco
     let numLicitacaoFormatado = '';
     if (licitacao.tipo_cadastro === 'pncp') {
-      // PNCP: prioriza num_licitacao do banco (preserva zeros à esquerda se existir)
-      // Se não tiver no banco, monta de sequencial_compra/ano_compra
-      if (licitacao.num_licitacao && licitacao.num_licitacao.trim() !== '') {
-        numLicitacaoFormatado = licitacao.num_licitacao;
-      } else if (sequencialCompra !== null && anoCompra !== null) {
+      // PNCP: SEMPRE usa sequencial_compra/ano_compra
+      if (sequencialCompra !== null && anoCompra !== null) {
         numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
       }
     } else if (licitacao.tipo_cadastro === 'Manual') {
       // Manual: usa num_licitacao do banco
       numLicitacaoFormatado = licitacao.num_licitacao || '';
     } else {
-      // Fallback: prioriza num_licitacao do banco, senão tenta usar sequencial_compra/ano_compra
-      if (licitacao.num_licitacao && licitacao.num_licitacao.trim() !== '') {
-        numLicitacaoFormatado = licitacao.num_licitacao;
-      } else if (sequencialCompra !== null && anoCompra !== null) {
+      // Fallback: se não tiver tipo_cadastro definido, tenta usar sequencial_compra/ano_compra
+      if (sequencialCompra !== null && anoCompra !== null) {
         numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
+      } else if (licitacao.num_licitacao && licitacao.num_licitacao.trim() !== '') {
+        numLicitacaoFormatado = licitacao.num_licitacao;
       }
     }
 
@@ -825,8 +1031,8 @@ export default function LicitacaoCadastro() {
       pncp: licitacao.cd_pn || '',
       modalidade: tipoId || '',
       orgao_pncp: orgaoValido,
-      dt_publicacao: licitacao.dt_publicacao 
-        ? new Date(licitacao.dt_publicacao).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      dt_publicacao: licitacao.dt_encerramento_proposta 
+        ? formatarDataISO(licitacao.dt_encerramento_proposta)
         : '',
       link_processo: licitacao.link_processo || null,
       links: licitacao.links || [],
@@ -1003,23 +1209,31 @@ export default function LicitacaoCadastro() {
         dataToSave.num_licitacao = `${formData.sequencial_compra}/${formData.ano_compra}`;
       }
 
-      // Converte dt_publicacao de DD/MM/AAAA para YYYY-MM-DD (formato ISO) se existir
-      // Se estiver vazio, define como null (permitido para cadastros manuais)
-      if (dataToSave.dt_publicacao && dataToSave.dt_publicacao.trim() !== '') {
-        const dataParseada = parsearData(dataToSave.dt_publicacao);
+      // Converte dt_publicacao do formulário para dt_encerramento_proposta no banco
+      // Sempre salva em dt_encerramento_proposta em horário de Brasília (21:00)
+      if (formData.dt_publicacao && formData.dt_publicacao.trim() !== '') {
+        const dataParseada = parsearData(formData.dt_publicacao);
         if (dataParseada) {
-          // Formata como YYYY-MM-DD para o banco de dados
+          // Usa os valores diretamente do parse para evitar problemas de fuso horário
           const ano = dataParseada.getFullYear();
           const mes = String(dataParseada.getMonth() + 1).padStart(2, '0');
           const dia = String(dataParseada.getDate()).padStart(2, '0');
-          dataToSave.dt_publicacao = `${ano}-${mes}-${dia}`;
+          
+          // Cria a data em horário de Brasília (UTC-3) às 21:00
+          // Formato ISO com timezone: YYYY-MM-DDTHH:mm:ss-03:00
+          dataToSave.dt_encerramento_proposta = `${ano}-${mes}-${dia}T21:00:00-03:00`;
+          
+          // Remove dt_publicacao do dataToSave se existir (não deve ser salvo)
+          delete dataToSave.dt_publicacao;
         } else {
           // Se não conseguir parsear, define como null
-          dataToSave.dt_publicacao = null;
+          dataToSave.dt_encerramento_proposta = null;
+          delete dataToSave.dt_publicacao;
         }
       } else {
         // Se estiver vazio ou não existir, define como null (permitido para cadastros manuais)
-        dataToSave.dt_publicacao = null;
+        dataToSave.dt_encerramento_proposta = null;
+        delete dataToSave.dt_publicacao;
       }
 
       // Remove o id se ainda estiver presente (não deve ser salvo no objeto)
@@ -1163,7 +1377,6 @@ export default function LicitacaoCadastro() {
 
   const handleDelete = async () => {
     if (!contratacaoId) return;
-    if (!confirm('Tem certeza que deseja excluir esta licitação?')) return;
 
     try {
       const { error } = await supabase
@@ -1172,14 +1385,51 @@ export default function LicitacaoCadastro() {
         .eq('id', contratacaoId);
       if (error) throw error;
       toast.success('Licitação excluída!');
+      setDeleteDialogOpen(false);
       window.history.back();
     } catch (error: any) {
       toast.error('Erro ao excluir: ' + error.message);
+      setDeleteDialogOpen(false);
     }
   };
 
   const handleLimpar = () => {
-    // Limpa todos os campos do formulário
+    // Preserva o valor de PNCP se for uma UF válida
+    const pncpAtual = formData.pncp;
+    const pncpPreservado = pncpAtual && UFS.includes(pncpAtual) ? pncpAtual : '';
+    
+    // Limpa todos os campos do formulário, exceto PNCP se for uma UF válida
+    setFormData({
+      num_ativa: '',
+      cadastrado_por: '',
+      pncp: pncpPreservado,
+      uf: '',
+      modalidade: '',
+      num_licitacao: '',
+      dt_publicacao: '',
+      orgao_pncp: '',
+      conteudo: '',
+      tipo_cadastro: 'manual',
+      link_processo: null,
+      links: [],
+      sequencial_compra: null,
+      ano_compra: null,
+    });
+    
+    // Limpa checkboxes selecionados (ramos de atividade)
+    setSelectedRamos([]);
+    
+    // Fecha popovers se estiverem abertos
+    setTipoPopupOpen(false);
+    setOrgaoPopupOpen(false);
+    setLinksPopupOpen(false);
+    setBuscarPopupOpen(false);
+    
+    toast.success('Todos os campos foram limpos!');
+  };
+
+  const handleNovo = () => {
+    // Limpa todos os campos do formulário para iniciar um novo cadastro
     setFormData({
       num_ativa: '',
       cadastrado_por: '',
@@ -1206,7 +1456,35 @@ export default function LicitacaoCadastro() {
     setLinksPopupOpen(false);
     setBuscarPopupOpen(false);
     
-    toast.success('Todos os campos foram limpos!');
+    // Remove o ID da URL se existir
+    if (contratacaoId) {
+      setSearchParams({});
+    }
+    
+    toast.success('Formulário limpo para novo cadastro!');
+  };
+
+  const handlePuxarOrgaoUltimaLicitacao = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('contratacoes')
+        .select('orgao_pncp')
+        .eq('cadastrado', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data && data.orgao_pncp) {
+        setFormData({ ...formData, orgao_pncp: data.orgao_pncp });
+        toast.success('Órgão da última licitação cadastrada preenchido!');
+      } else {
+        toast.warning('Nenhuma licitação cadastrada encontrada.');
+      }
+    } catch (error: any) {
+      toast.error('Erro ao buscar última licitação: ' + error.message);
+    }
   };
 
   const toggleRamo = (ramoId: string) => {
@@ -1304,6 +1582,24 @@ export default function LicitacaoCadastro() {
   const formatarDataParaString = (data: Date | null): string => {
     if (!data) return '';
     return format(data, 'dd/MM/yyyy');
+  };
+
+  // Converte string ISO (YYYY-MM-DD) para DD/MM/AAAA sem problemas de fuso horário
+  const formatarDataISO = (dataISO: string | null): string => {
+    if (!dataISO || dataISO.trim() === '') return '';
+    
+    // Parse manual da string ISO para evitar problemas de fuso horário
+    const partes = dataISO.split('T')[0].split('-'); // Pega apenas a parte da data (antes do T)
+    if (partes.length !== 3) return '';
+    
+    const ano = parseInt(partes[0]);
+    const mes = parseInt(partes[1]);
+    const dia = parseInt(partes[2]);
+    
+    if (isNaN(ano) || isNaN(mes) || isNaN(dia)) return '';
+    
+    // Formata como DD/MM/AAAA
+    return `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`;
   };
 
   // Normaliza texto removendo acentos e normalizando espaços
@@ -1490,11 +1786,23 @@ export default function LicitacaoCadastro() {
             {/* Botões de ação no topo direito */}
             <div className="flex items-center gap-2">
               <Button 
+                variant="default" 
+                size="sm" 
+                onClick={handleNovo}
+                className="text-white px-4"
+                style={{ backgroundColor: '#414AC8' }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3539A3'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#414AC8'}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Novo
+              </Button>
+              <Button 
                 variant="destructive" 
                 size="sm" 
-                onClick={handleDelete}
-                disabled={!contratacaoId}
-                className="bg-red-500 hover:bg-red-600 text-white px-4"
+                onClick={() => setDeleteDialogOpen(true)}
+                disabled={!formData.num_ativa || formData.num_ativa.trim() === ''}
+                className="bg-red-500 hover:bg-red-600 text-white px-4 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Excluir
@@ -1559,21 +1867,178 @@ export default function LicitacaoCadastro() {
             <div className="space-y-1">
               <Label htmlFor="pncp" className="text-sm font-normal text-[#262626]">PNCP</Label>
               <div className="flex gap-2">
-                <Select
-                  value={formData.pncp || ''}
-                  onValueChange={(value) => setFormData({ ...formData, pncp: value })}
+                <Popover 
+                  open={pncpPopupOpen} 
+                  onOpenChange={(open) => {
+                    setPncpPopupOpen(open);
+                    if (!open) {
+                      setPncpSearchTerm(''); // Limpa a busca quando fechar
+                    }
+                  }}
                 >
-                  <SelectTrigger id="pncp" className="h-9 bg-white flex-1">
-                    <SelectValue placeholder="Selecione uma UF" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {UFS.map((uf) => (
-                      <SelectItem key={uf} value={uf}>
-                        {uf}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={pncpPopupOpen}
+                      className="h-9 flex-1 justify-between font-normal bg-white"
+                      tabIndex={1}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          // Fecha o popover de PNCP se estiver aberto
+                          if (pncpPopupOpen) {
+                            setPncpPopupOpen(false);
+                          }
+                          // Avança para o próximo campo
+                          setTimeout(() => {
+                            const tipoButton = document.querySelector('[role="combobox"][tabindex="2"]') as HTMLElement;
+                            if (tipoButton) {
+                              tipoButton.focus();
+                              // Abre o popover de tipo após focar
+                              if (!tipoPopupOpen) {
+                                setTipoPopupOpen(true);
+                              }
+                            }
+                          }, 100);
+                        }
+                      }}
+                    >
+                      {formData.pncp || "Selecione uma UF"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent 
+                    className="w-[--radix-popover-trigger-width] p-0" 
+                    align="start"
+                    onInteractOutside={(e) => {
+                      const target = e.target as HTMLElement;
+                      if (target.closest('[role="combobox"]')) {
+                        e.preventDefault();
+                      }
+                    }}
+                  >
+                    <Command 
+                      filter={(value, search) => {
+                        return 1;
+                      }}
+                    >
+                      <CommandInput 
+                        ref={pncpSearchInputRef}
+                        placeholder="Buscar UF..." 
+                        value={pncpSearchTerm}
+                        onValueChange={(value) => {
+                          setPncpSearchTerm(value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // Encontra o item destacado na lista
+                            const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
+                            let ufToSelect = '';
+                            
+                            if (selectedItem) {
+                              ufToSelect = selectedItem.textContent?.trim() || '';
+                            } else {
+                              // Se não houver item destacado, seleciona o primeiro da lista
+                              const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
+                              if (firstItem) {
+                                ufToSelect = firstItem.textContent?.trim() || '';
+                              }
+                            }
+                            
+                            // Seleciona a UF diretamente sem chamar handleSelect
+                            if (ufToSelect && UFS.includes(ufToSelect)) {
+                              // Atualiza o estado primeiro
+                              setFormData({ ...formData, pncp: ufToSelect });
+                              setPncpSearchTerm('');
+                              
+                              // Fecha o popover imediatamente
+                              setPncpPopupOpen(false);
+                              
+                              // Aguarda para garantir que o popover feche completamente antes de focar no próximo
+                              requestAnimationFrame(() => {
+                                requestAnimationFrame(() => {
+                                  // Força o fechamento novamente para garantir
+                                  setPncpPopupOpen(false);
+                                  
+                                  // Abre o popover de tipo primeiro
+                                  if (!tipoPopupOpen) {
+                                    setTipoPopupOpen(true);
+                                  }
+                                  
+                                  // Aguarda o popover abrir e então foca no input de pesquisa
+                                  setTimeout(() => {
+                                    // Tenta focar no input de pesquisa do tipo
+                                    const tipoInput = tipoSearchInputRef.current || 
+                                      document.querySelector('[cmdk-input]') as HTMLInputElement;
+                                    
+                                    if (tipoInput) {
+                                      tipoInput.focus();
+                                      // Força o foco novamente para garantir
+                                      setTimeout(() => {
+                                        tipoInput.focus();
+                                      }, 50);
+                                    } else {
+                                      // Fallback: foca no botão se o input não estiver disponível
+                                      const tipoButton = document.querySelector('[role="combobox"][tabindex="2"]') as HTMLElement;
+                                      if (tipoButton) {
+                                        tipoButton.focus();
+                                      }
+                                    }
+                                  }, 200);
+                                });
+                              });
+                            }
+                          }
+                        }}
+                      />
+                      <CommandList>
+                        <CommandEmpty>Nenhuma UF encontrada.</CommandEmpty>
+                        <CommandGroup className="p-0">
+                          {UFS
+                            .filter((uf) => {
+                              if (!pncpSearchTerm) return true;
+                              const searchLower = pncpSearchTerm.toLowerCase();
+                              const ufLower = uf.toLowerCase();
+                              return ufLower.startsWith(searchLower);
+                            })
+                            .map((uf) => {
+                              const handleSelect = () => {
+                                setFormData({ ...formData, pncp: uf });
+                                setPncpPopupOpen(false);
+                                setPncpSearchTerm('');
+                                // Não avança automaticamente quando selecionado por clique - deixa o usuário decidir
+                              };
+                              
+                              return (
+                                <CommandItem
+                                  key={uf}
+                                  value={uf}
+                                  onSelect={handleSelect}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleSelect();
+                                  }}
+                                  className={cn(
+                                    "px-3 py-2 rounded-none cursor-pointer",
+                                    formData.pncp === uf
+                                      ? "!bg-[#02572E]/10 !text-[#02572E]"
+                                      : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                                  )}
+                                >
+                                  {uf}
+                                </CommandItem>
+                              );
+                            })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 <Button
                   variant="secondary"
                   size="icon"
@@ -1610,13 +2075,14 @@ export default function LicitacaoCadastro() {
                   }
                 }}
               >
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={tipoPopupOpen}
-                    className="h-9 w-full justify-between font-normal bg-white"
-                  >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={tipoPopupOpen}
+                      className="h-9 w-full justify-between font-normal bg-white"
+                      tabIndex={2}
+                    >
                     {formData.modalidade
                       ? tipos.find((tipo) => tipo.id === formData.modalidade) 
                         ? `${tipos.find((tipo) => tipo.id === formData.modalidade)?.sigla} - ${tipos.find((tipo) => tipo.id === formData.modalidade)?.descricao}`
@@ -1625,7 +2091,17 @@ export default function LicitacaoCadastro() {
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <PopoverContent 
+                  className="w-[--radix-popover-trigger-width] p-0" 
+                  align="start"
+                  onInteractOutside={(e) => {
+                    // Permite interação com elementos dentro do popover
+                    const target = e.target as HTMLElement;
+                    if (target.closest('[role="combobox"]')) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
                   <Command 
                     filter={(value, search) => {
                       // Desabilita o filtro padrão - vamos filtrar manualmente
@@ -1633,10 +2109,38 @@ export default function LicitacaoCadastro() {
                     }}
                   >
                     <CommandInput 
+                      ref={tipoSearchInputRef}
                       placeholder="Buscar tipo..." 
                       value={tipoSearchTerm}
                       onValueChange={(value) => {
                         setTipoSearchTerm(value);
+                      }}
+                      autoFocus={tipoPopupOpen}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          e.preventDefault();
+                          // Encontra o item destacado na lista (cmdk usa data-selected ou aria-selected)
+                          const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
+                          if (selectedItem) {
+                            // Dispara o evento de seleção
+                            selectedItem.click();
+                          } else {
+                            // Se não houver item destacado, seleciona o primeiro da lista
+                            const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
+                            if (firstItem) {
+                              firstItem.click();
+                            }
+                          }
+                          // Fecha o popover
+                          setTipoPopupOpen(false);
+                          // Avança para o próximo campo (input número)
+                          setTimeout(() => {
+                            const numeroInput = document.getElementById('num_licitacao') as HTMLElement;
+                            if (numeroInput) {
+                              numeroInput.focus();
+                            }
+                          }, 100);
+                        }
                       }}
                     />
                     <CommandList>
@@ -1650,29 +2154,68 @@ export default function LicitacaoCadastro() {
                             const siglaLower = tipo.sigla?.toLowerCase() || '';
                             return siglaLower.startsWith(searchLower);
                           })
-                          .map((tipo) => (
-                            <CommandItem
-                              key={tipo.id}
-                              value={`${tipo.sigla} ${tipo.descricao || ''}`}
-                              onSelect={() => {
-                                setFormData({ 
-                                  ...formData, 
-                                  modalidade: tipo.id, // ID do tipo (para o dropdown)
-                                  descricao_modalidade: tipo.id // ID do tipo (UUID) - não a descrição!
-                                });
-                                setTipoPopupOpen(false);
-                                setTipoSearchTerm(''); // Limpa a busca ao selecionar
-                              }}
-                              className={cn(
-                                "px-3 py-2 rounded-none cursor-pointer",
-                                formData.modalidade === tipo.id
-                                  ? "!bg-[#02572E]/10 !text-[#02572E]"
-                                  : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
-                              )}
-                            >
-                              {tipo.sigla} - {tipo.descricao}
-                            </CommandItem>
-                          ))}
+                          .map((tipo) => {
+                            const handleSelect = () => {
+                              const now = Date.now();
+                              const lastTime = lastSelectTimeMap.current.get(tipo.id) || 0;
+                              
+                              // Previne múltiplas chamadas em menos de 200ms
+                              if (now - lastTime < 200) {
+                                return;
+                              }
+                              lastSelectTimeMap.current.set(tipo.id, now);
+                              
+                              setFormData({ 
+                                ...formData, 
+                                modalidade: tipo.id, // ID do tipo (para o dropdown)
+                                descricao_modalidade: tipo.id // ID do tipo (UUID) - não a descrição!
+                              });
+                              setTipoPopupOpen(false);
+                              setTipoSearchTerm(''); // Limpa a busca ao selecionar
+                            };
+                            
+                            return (
+                              <CommandItem
+                                key={tipo.id}
+                                value={`${tipo.sigla} ${tipo.descricao || ''}`}
+                                onSelect={handleSelect}
+                                onClick={(e) => {
+                                  // Fallback para garantir que funcione em todos os navegadores
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleSelect();
+                                }}
+                                onMouseDown={(e) => {
+                                  // Fallback adicional para mouse
+                                  if (e.button === 0) {
+                                    e.preventDefault();
+                                    handleSelect();
+                                  }
+                                }}
+                                onTouchStart={(e) => {
+                                  // Fallback para dispositivos touch
+                                  e.preventDefault();
+                                  handleSelect();
+                                }}
+                                className={cn(
+                                  "px-3 py-2 rounded-none cursor-pointer",
+                                  formData.modalidade === tipo.id
+                                    ? "!bg-[#02572E]/10 !text-[#02572E]"
+                                    : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                                )}
+                                style={{ 
+                                  pointerEvents: 'auto', 
+                                  userSelect: 'none',
+                                  WebkitUserSelect: 'none',
+                                  MozUserSelect: 'none',
+                                  msUserSelect: 'none',
+                                  touchAction: 'manipulation'
+                                }}
+                              >
+                                {tipo.sigla} - {tipo.descricao}
+                              </CommandItem>
+                            );
+                          })}
                       </CommandGroup>
                     </CommandList>
                   </Command>
@@ -1683,8 +2226,18 @@ export default function LicitacaoCadastro() {
               <Label htmlFor="num_licitacao" className="text-sm font-normal text-[#262626]">Número</Label>
               <Input
                 id="num_licitacao"
+                tabIndex={3}
                 placeholder="Digite o número (ex: 02/2026)"
                 value={formData.num_licitacao || formatarNumeroLicitacao()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab' && !e.shiftKey) {
+                    e.preventDefault();
+                    const dataInput = document.getElementById('dt_publicacao') as HTMLElement;
+                    if (dataInput) {
+                      dataInput.focus();
+                    }
+                  }
+                }}
                 onChange={(e) => {
                   const valor = e.target.value;
                   // Permite apenas números e "/"
@@ -1713,7 +2266,24 @@ export default function LicitacaoCadastro() {
               <div className="relative">
                 <Input
                   id="dt_publicacao"
+                  tabIndex={4}
                   value={formData.dt_publicacao || ''}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Tab' && !e.shiftKey) {
+                      e.preventDefault();
+                      // Abre o popover de órgão primeiro
+                      if (!orgaoPopupOpen) {
+                        setOrgaoPopupOpen(true);
+                      }
+                      // Foca no botão de órgão - o useEffect vai cuidar de focar no input
+                      setTimeout(() => {
+                        const orgaoButton = document.querySelector('[role="combobox"][tabindex="5"]') as HTMLElement;
+                        if (orgaoButton) {
+                          orgaoButton.focus();
+                        }
+                      }, 100);
+                    }
+                  }}
                   onChange={(e) => {
                     const valorFormatado = formatarDataInput(e.target.value);
                     setFormData({ ...formData, dt_publicacao: valorFormatado });
@@ -1765,6 +2335,7 @@ export default function LicitacaoCadastro() {
                     role="combobox"
                     aria-expanded={orgaoPopupOpen}
                     className="h-9 flex-1 justify-between font-normal bg-white"
+                    tabIndex={5}
                   >
                     {formData.orgao_pncp
                       ? (() => {
@@ -1775,30 +2346,109 @@ export default function LicitacaoCadastro() {
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <PopoverContent 
+                  className="w-[--radix-popover-trigger-width] p-0" 
+                  align="start"
+                  onInteractOutside={(e) => {
+                    // Permite interação com elementos dentro do popover
+                    const target = e.target as HTMLElement;
+                    if (target.closest('[role="combobox"]')) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
                   <Command>
-                    <CommandInput placeholder="Buscar orgão..." />
+                    <CommandInput 
+                      ref={orgaoSearchInputRef}
+                      placeholder="Buscar orgão..." 
+                      autoFocus={orgaoPopupOpen}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          e.preventDefault();
+                          // Encontra o item destacado na lista (cmdk usa data-selected ou aria-selected)
+                          const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
+                          if (selectedItem) {
+                            // Dispara o evento de seleção
+                            selectedItem.click();
+                          } else {
+                            // Se não houver item destacado, seleciona o primeiro da lista
+                            const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
+                            if (firstItem) {
+                              firstItem.click();
+                            }
+                          }
+                          // Fecha o popover
+                          setOrgaoPopupOpen(false);
+                          // Avança para o próximo campo (textarea conteúdo)
+                          setTimeout(() => {
+                            const conteudoTextarea = document.getElementById('conteudo') as HTMLElement;
+                            if (conteudoTextarea) {
+                              conteudoTextarea.focus();
+                            }
+                          }, 100);
+                        }
+                      }}
+                    />
                     <CommandList>
                       <CommandEmpty>Nenhum orgão encontrado.</CommandEmpty>
                       <CommandGroup className="p-0">
-                        {orgaos.map((orgao) => (
-                          <CommandItem
-                            key={orgao.id}
-                            value={orgao.nome_orgao}
-                            onSelect={() => {
-                              setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
-                              setOrgaoPopupOpen(false);
-                            }}
-                            className={cn(
-                              "px-3 py-2 rounded-none cursor-pointer",
-                              (formData.orgao_pncp === orgao.nome_orgao || formData.orgao_pncp === orgao.id)
-                                ? "!bg-[#02572E]/10 !text-[#02572E]"
-                                : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
-                            )}
-                          >
-                            {orgao.nome_orgao}
-                          </CommandItem>
-                        ))}
+                        {orgaos.map((orgao) => {
+                          const handleSelect = () => {
+                            const now = Date.now();
+                            const lastTime = lastSelectTimeMap.current.get(orgao.id) || 0;
+                            
+                            // Previne múltiplas chamadas em menos de 200ms
+                            if (now - lastTime < 200) {
+                              return;
+                            }
+                            lastSelectTimeMap.current.set(orgao.id, now);
+                            
+                            setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
+                            setOrgaoPopupOpen(false);
+                          };
+                          
+                          return (
+                            <CommandItem
+                              key={orgao.id}
+                              value={orgao.nome_orgao}
+                              onSelect={handleSelect}
+                              onClick={(e) => {
+                                // Fallback para garantir que funcione em todos os navegadores
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleSelect();
+                              }}
+                              onMouseDown={(e) => {
+                                // Fallback adicional para mouse
+                                if (e.button === 0) {
+                                  e.preventDefault();
+                                  handleSelect();
+                                }
+                              }}
+                              onTouchStart={(e) => {
+                                // Fallback para dispositivos touch
+                                e.preventDefault();
+                                handleSelect();
+                              }}
+                              className={cn(
+                                "px-3 py-2 rounded-none cursor-pointer",
+                                (formData.orgao_pncp === orgao.nome_orgao || formData.orgao_pncp === orgao.id)
+                                  ? "!bg-[#02572E]/10 !text-[#02572E]"
+                                  : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                              )}
+                              style={{ 
+                                pointerEvents: 'auto', 
+                                userSelect: 'none',
+                                WebkitUserSelect: 'none',
+                                MozUserSelect: 'none',
+                                msUserSelect: 'none',
+                                touchAction: 'manipulation'
+                              }}
+                            >
+                              {orgao.nome_orgao}
+                            </CommandItem>
+                          );
+                        })}
                       </CommandGroup>
                     </CommandList>
                   </Command>
@@ -1813,9 +2463,20 @@ export default function LicitacaoCadastro() {
               >
                 <Search className="h-4 w-4" />
               </Button>
+              <Button
+                variant="secondary"
+                size="icon"
+                className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                type="button"
+                onClick={handlePuxarOrgaoUltimaLicitacao}
+                title="Puxar órgão da última licitação cadastrada"
+              >
+                <RotateCw className="h-4 w-4" />
+              </Button>
             </div>
             <Textarea
               id="conteudo"
+              tabIndex={6}
               value={formData.conteudo || ''}
               onChange={(e) => setFormData({ ...formData, conteudo: e.target.value })}
               className="resize-none flex-1 min-h-[120px] text-[12px] text-[#1a1a1a] bg-white"
@@ -1948,6 +2609,27 @@ export default function LicitacaoCadastro() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog de confirmação de exclusão */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir esta licitação? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDelete}
+              className="bg-red-500 hover:bg-red-600 text-white"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </MainLayout>
   );
 }

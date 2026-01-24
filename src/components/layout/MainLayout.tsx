@@ -2,7 +2,9 @@ import { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Breadcrumb } from './Breadcrumb';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSidebar } from '@/contexts/SidebarContext';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { cn } from '@/lib/utils';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -10,16 +12,25 @@ interface MainLayoutProps {
 
 export function MainLayout({ children }: MainLayoutProps) {
   const { user, signOut } = useAuth();
+  const { isMinimized } = useSidebar();
   
   const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário';
   const userInitials = userName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   
+  const sidebarWidth = isMinimized ? 60 : 230;
+  
   return (
     <div className="min-h-screen bg-background flex">
       <Sidebar />
-      <div className="flex-1 flex flex-col ml-[230px]">
+      <div className={cn(
+        "flex-1 flex flex-col transition-all duration-300",
+        isMinimized ? "ml-[60px]" : "ml-[230px]"
+      )}>
         {/* Header Superior */}
-        <header className="h-16 bg-white border-b border-border flex items-center justify-between px-6 fixed top-0 right-0 left-[230px] z-40">
+        <header className={cn(
+          "h-16 bg-white border-b border-border flex items-center justify-between fixed top-0 right-0 z-40 transition-all duration-300",
+          isMinimized ? "left-[60px] pl-14" : "left-[230px] px-6"
+        )}>
           {/* Breadcrumb à esquerda */}
           <div className="flex items-center">
             <Breadcrumb />

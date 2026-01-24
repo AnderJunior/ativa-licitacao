@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Dialog,
@@ -40,6 +40,14 @@ const UFS = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
 ];
 
+// Função para normalizar string (remove acentos e converte para minúsculas)
+const normalizarString = (str: string): string => {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+};
+
 export function BuscarOrgaoPopup({
   open,
   onOpenChange,
@@ -56,6 +64,8 @@ export function BuscarOrgaoPopup({
   const [carregando, setCarregando] = useState(false);
   const [orgaoSelecionado, setOrgaoSelecionado] = useState<Orgao | null>(null);
   const [termoInicialAplicado, setTermoInicialAplicado] = useState(false);
+  const buscaAutomaticaRef = useRef<NodeJS.Timeout | null>(null);
+  const ultimaCombinacaoFiltrosRef = useRef<string>('');
 
   const buscarOrgaos = useCallback(async () => {
     setCarregando(true);
@@ -76,11 +86,7 @@ export function BuscarOrgaoPopup({
         query = query.or(`compras_net.ilike.%${filtro}%,compras_mg.ilike.%${filtro}%`);
       }
 
-      if (filtroCidade.trim()) {
-        const filtro = filtroCidade.trim().replace(/%/g, '');
-        query = query.ilike('cidade_ibge', `%${filtro}%`);
-      }
-
+      // Não aplica filtro de cidade aqui - será aplicado depois de buscar os nomes das cidades
       if (filtroUF) {
         query = query.eq('uf', filtroUF);
       }
@@ -120,7 +126,18 @@ export function BuscarOrgaoPopup({
         })
       );
 
-      setOrgaos(orgaosComCidade);
+      // Aplicar filtro de cidade no nome da cidade (case-insensitive e accent-insensitive)
+      let orgaosFiltrados = orgaosComCidade;
+      if (filtroCidade.trim()) {
+        const filtroNormalizado = normalizarString(filtroCidade.trim().replace(/%/g, ''));
+        orgaosFiltrados = orgaosComCidade.filter((orgao) => {
+          if (!orgao.cidade_nome) return false;
+          const cidadeNormalizada = normalizarString(orgao.cidade_nome);
+          return cidadeNormalizada.includes(filtroNormalizado);
+        });
+      }
+
+      setOrgaos(orgaosFiltrados);
     } catch (error) {
       console.error('Erro ao buscar órgãos:', error);
       toast.error('Erro ao buscar órgãos. Tente novamente.');
@@ -140,18 +157,56 @@ export function BuscarOrgaoPopup({
       setFiltroFone('');
       setOrgaos([]);
       setOrgaoSelecionado(null);
-      setTermoInicialAplicado(false); // Reseta a flag quando fecha
+      setTermoInicialAplicado(false);
+      ultimaCombinacaoFiltrosRef.current = '';
     } else if (termoInicial && termoInicial.trim() && !termoInicialAplicado) {
-      // Se o popup abrir com um termo inicial e ainda não foi aplicado, preenche o filtro e busca automaticamente
+      // Se o popup abrir com um termo inicial, preenche o filtro
       setFiltroOrgao(termoInicial);
-      setTermoInicialAplicado(true); // Marca como aplicado para não sobrescrever se o usuário editar
-      // Usa um pequeno delay para garantir que o filtro foi atualizado antes de buscar
-      const timeoutId = setTimeout(() => {
-        buscarOrgaos();
-      }, 150);
-      return () => clearTimeout(timeoutId);
+      setTermoInicialAplicado(true);
+      // Limpa a referência para permitir busca imediata
+      ultimaCombinacaoFiltrosRef.current = '';
     }
-  }, [open, termoInicial, buscarOrgaos, termoInicialAplicado]);
+  }, [open, termoInicial, termoInicialAplicado]);
+
+  // Busca automática em tempo real quando qualquer input mudar
+  useEffect(() => {
+    // Limpa timeout anterior se existir
+    if (buscaAutomaticaRef.current) {
+      clearTimeout(buscaAutomaticaRef.current);
+      buscaAutomaticaRef.current = null;
+    }
+
+    if (!open || carregando) return;
+
+    // Não busca se o termo inicial ainda está sendo aplicado
+    if (termoInicial && !termoInicialAplicado) return;
+
+    // Cria uma string única com todos os filtros para verificar se mudou
+    const combinacaoFiltros = `${filtroOrgao.trim()}|${filtroUASG.trim()}|${filtroCidade.trim()}|${filtroUF}|${filtroFone.trim()}`;
+    
+    // Não busca se já buscou para esta mesma combinação de filtros
+    if (combinacaoFiltros === ultimaCombinacaoFiltrosRef.current) return;
+
+    // Busca automaticamente após um delay quando detecta mudança em qualquer input
+    buscaAutomaticaRef.current = setTimeout(() => {
+      // Verifica novamente se os filtros ainda são os mesmos (evita busca com valores antigos)
+      const combinacaoAtual = `${filtroOrgao.trim()}|${filtroUASG.trim()}|${filtroCidade.trim()}|${filtroUF}|${filtroFone.trim()}`;
+      
+      if (!carregando && combinacaoAtual === combinacaoFiltros) {
+        ultimaCombinacaoFiltrosRef.current = combinacaoAtual;
+        buscarOrgaos();
+      }
+      buscaAutomaticaRef.current = null;
+    }, 500); // Delay de 500ms para evitar muitas requisições enquanto o usuário digita
+
+    return () => {
+      if (buscaAutomaticaRef.current) {
+        clearTimeout(buscaAutomaticaRef.current);
+        buscaAutomaticaRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroOrgao, filtroUASG, filtroCidade, filtroUF, filtroFone, open, carregando, termoInicial, termoInicialAplicado]);
 
   const handleBuscar = () => {
     buscarOrgaos();
