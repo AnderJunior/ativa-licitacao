@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,12 @@ import { toast } from 'sonner';
 import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft } from 'lucide-react';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
 import { cn } from '@/lib/utils';
+
+interface Site {
+  id: string;
+  dominio: string;
+  site: string;
+}
 
 interface Orgao {
   id: string;
@@ -60,18 +66,38 @@ export default function OrgaoCadastro() {
   });
 
   const [newEmail, setNewEmail] = useState('');
-  const [newSite, setNewSite] = useState('');
+  
+  // Estados para dropdown de sites
+  const [sites, setSites] = useState<Site[]>([]);
+  const [sitePopupOpen, setSitePopupOpen] = useState(false);
+  const [siteSearchTerm, setSiteSearchTerm] = useState('');
+  const siteSearchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadGrupos();
+    loadSites();
     if (orgaoId) {
       loadOrgao(orgaoId);
     }
   }, [orgaoId]);
 
+  // Foca no input quando o popover de sites abre
+  useEffect(() => {
+    if (sitePopupOpen && siteSearchInputRef.current) {
+      setTimeout(() => {
+        siteSearchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [sitePopupOpen]);
+
   const loadGrupos = async () => {
     const { data } = await supabase.from('grupo_de_orgaos').select('*').order('nome');
     if (data) setGrupos(data);
+  };
+
+  const loadSites = async () => {
+    const { data } = await supabase.from('sites').select('*').order('dominio');
+    if (data) setSites(data);
   };
 
   const handleSelectCidade = (uf: string, cidadeId: string, cidadeNome: string) => {
@@ -124,6 +150,16 @@ export default function OrgaoCadastro() {
   const handleSave = async () => {
     if (!formData.nome_orgao?.trim()) {
       toast.error('Nome do órgão é obrigatório');
+      return;
+    }
+    
+    if (!formData.cidade_ibge || !formData.uf) {
+      toast.error('Cidade é obrigatória');
+      return;
+    }
+    
+    if (!formData.sites || formData.sites.length === 0) {
+      toast.error('É necessário adicionar pelo menos um site');
       return;
     }
 
@@ -197,7 +233,7 @@ export default function OrgaoCadastro() {
         setSelectedGrupo('');
         setCidadeDisplay('');
         setNewEmail('');
-        setNewSite('');
+        setSiteSearchTerm('');
       }
     } catch (error: any) {
       toast.error('Erro ao salvar: ' + error.message);
@@ -241,14 +277,19 @@ export default function OrgaoCadastro() {
     setFormData({ ...formData, emails });
   };
 
-  const addSite = () => {
-    if (newSite.trim()) {
-      setFormData({
-        ...formData,
-        sites: [...(formData.sites || []), newSite.trim()],
-      });
-      setNewSite('');
+  const addSite = (siteUrl: string) => {
+    // Verifica se o site já foi adicionado
+    if (formData.sites?.includes(siteUrl)) {
+      toast.error('Este site já foi adicionado');
+      return;
     }
+    
+    setFormData({
+      ...formData,
+      sites: [...(formData.sites || []), siteUrl],
+    });
+    setSitePopupOpen(false);
+    setSiteSearchTerm('');
   };
 
   const removeSite = (index: number) => {
@@ -295,7 +336,7 @@ export default function OrgaoCadastro() {
           {!isViewMode && (
             <Button 
               onClick={handleSave} 
-              disabled={saving}
+              disabled={saving || !formData.nome_orgao?.trim() || !formData.cidade_ibge || !formData.uf || !formData.sites || formData.sites.length === 0}
               className="bg-[#02572E] text-white hover:bg-[#024a27] px-6"
             >
               {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
@@ -497,27 +538,110 @@ export default function OrgaoCadastro() {
         {/* Linha 5: Sites */}
         <div className="mb-[12px]">
           <Label className="text-[14px] font-normal text-[#262626]">Sites</Label>
-          <div className="flex gap-2 mt-1">
-            <Input
-              type="url"
-              placeholder="Digite o link do site"
-              value={newSite}
-              onChange={(e) => setNewSite(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addSite())}
-              className="h-9 flex-1 bg-white"
-              disabled={isViewMode}
-            />
-            <Button 
-              type="button" 
-              variant="outline" 
-              size="icon"
-              onClick={addSite}
-              className="h-9 w-9 shrink-0"
-              disabled={isViewMode}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
+          {!isViewMode && (
+            <div className="mt-1">
+              <Popover 
+                open={sitePopupOpen} 
+                onOpenChange={(open) => {
+                  setSitePopupOpen(open);
+                  if (!open) {
+                    setSiteSearchTerm('');
+                  }
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={sitePopupOpen}
+                    className="h-9 w-full justify-between font-normal bg-white"
+                  >
+                    Selecione um site
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent 
+                  className="w-[--radix-popover-trigger-width] p-0" 
+                  align="start"
+                >
+                  <Command>
+                    <CommandInput 
+                      ref={siteSearchInputRef}
+                      placeholder="Buscar site..." 
+                      value={siteSearchTerm}
+                      onValueChange={(value) => {
+                        setSiteSearchTerm(value);
+                      }}
+                      autoFocus={sitePopupOpen}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          e.preventDefault();
+                          // Encontra o item destacado na lista
+                          const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
+                          if (selectedItem) {
+                            // Dispara o evento de seleção
+                            selectedItem.click();
+                          } else {
+                            // Se não houver item destacado, seleciona o primeiro da lista
+                            const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
+                            if (firstItem) {
+                              firstItem.click();
+                            }
+                          }
+                          // Fecha o popover
+                          setSitePopupOpen(false);
+                        }
+                      }}
+                    />
+                    {siteSearchTerm && (
+                      <CommandList>
+                        <CommandEmpty>Nenhum site encontrado.</CommandEmpty>
+                        <CommandGroup className="p-0 max-h-[300px] overflow-y-auto">
+                          {sites
+                            .filter((site) => {
+                              if (!siteSearchTerm) return false;
+                              const searchLower = siteSearchTerm.toLowerCase();
+                              const dominioLower = site.dominio?.toLowerCase() || '';
+                              const siteLower = site.site?.toLowerCase() || '';
+                              return dominioLower.includes(searchLower) || siteLower.includes(searchLower);
+                            })
+                            .map((site) => {
+                              const isSelected = formData.sites?.includes(site.site) || false;
+                              return (
+                                <CommandItem
+                                  key={site.id}
+                                  value={`${site.dominio} - ${site.site}`}
+                                  onSelect={() => {
+                                    if (!isSelected) {
+                                      addSite(site.site);
+                                    }
+                                  }}
+                                  disabled={isSelected}
+                                  className={cn(
+                                    "px-3 py-2 rounded-none cursor-pointer",
+                                    isSelected
+                                      ? "!bg-gray-100 !text-gray-400 cursor-not-allowed"
+                                      : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                                  )}
+                                >
+                                  <div className="flex flex-col">
+                                    <span className="font-medium">{site.dominio}</span>
+                                    <span className="text-xs text-gray-500">{site.site}</span>
+                                  </div>
+                                  {isSelected && (
+                                    <span className="ml-auto text-xs text-gray-400">Já adicionado</span>
+                                  )}
+                                </CommandItem>
+                              );
+                            })}
+                        </CommandGroup>
+                      </CommandList>
+                    )}
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+          )}
         </div>
 
         {/* Área pontilhada para sites e arquivos */}

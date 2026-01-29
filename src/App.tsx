@@ -15,6 +15,7 @@ import MarcacoesPendentes from "./pages/licitacoes/MarcacoesPendentes";
 import OrgaoCadastro from "./pages/orgaos/Cadastro";
 import OrgaosSemIBGE from "./pages/orgaos/SemIBGE";
 import OrgaosAgrupamentos from "./pages/orgaos/Agrupamentos";
+import Sites from "./pages/empresa/Sites";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -37,6 +38,7 @@ const App = () => (
               <Route path="/orgaos/cadastro" element={<ProtectedRoute><OrgaoCadastro /></ProtectedRoute>} />
               <Route path="/orgaos/sem-ibge" element={<ProtectedRoute><OrgaosSemIBGE /></ProtectedRoute>} />
               <Route path="/orgaos/agrupamentos" element={<ProtectedRoute><OrgaosAgrupamentos /></ProtectedRoute>} />
+              <Route path="/empresa/sites" element={<ProtectedRoute><Sites /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

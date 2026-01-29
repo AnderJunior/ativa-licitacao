@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   Dialog,
-  DialogContent,
+  DialogPortal,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +17,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { CadastrarOrgaoPopup } from './CadastrarOrgaoPopup';
 
 interface Orgao {
   id: string;
@@ -64,8 +68,14 @@ export function BuscarOrgaoPopup({
   const [carregando, setCarregando] = useState(false);
   const [orgaoSelecionado, setOrgaoSelecionado] = useState<Orgao | null>(null);
   const [termoInicialAplicado, setTermoInicialAplicado] = useState(false);
-  const buscaAutomaticaRef = useRef<NodeJS.Timeout | null>(null);
   const ultimaCombinacaoFiltrosRef = useRef<string>('');
+  const [cadastrarPopupOpen, setCadastrarPopupOpen] = useState(false);
+  
+  // Estados para arrastar o dialog
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const dialogContentRef = useRef<HTMLDivElement>(null);
 
   const buscarOrgaos = useCallback(async () => {
     setCarregando(true);
@@ -159,56 +169,89 @@ export function BuscarOrgaoPopup({
       setOrgaoSelecionado(null);
       setTermoInicialAplicado(false);
       ultimaCombinacaoFiltrosRef.current = '';
-    } else if (termoInicial && termoInicial.trim() && !termoInicialAplicado) {
-      // Se o popup abrir com um termo inicial, preenche o filtro
-      setFiltroOrgao(termoInicial);
-      setTermoInicialAplicado(true);
-      // Limpa a referência para permitir busca imediata
-      ultimaCombinacaoFiltrosRef.current = '';
+      // Reseta a posição do dialog
+      setPosition({ x: 0, y: 0 });
+    } else {
+      // Quando o popup abre, garante que está no centro
+      setPosition({ x: 0, y: 0 });
+      if (termoInicial && termoInicial.trim() && !termoInicialAplicado) {
+        // Se o popup abrir com um termo inicial, preenche o filtro
+        setFiltroOrgao(termoInicial);
+        setTermoInicialAplicado(true);
+        // Limpa a referência para permitir busca imediata
+        ultimaCombinacaoFiltrosRef.current = '';
+      }
     }
   }, [open, termoInicial, termoInicialAplicado]);
 
-  // Busca automática em tempo real quando qualquer input mudar
+  // Aplica o transform diretamente no elemento DOM sem animação
   useEffect(() => {
-    // Limpa timeout anterior se existir
-    if (buscaAutomaticaRef.current) {
-      clearTimeout(buscaAutomaticaRef.current);
-      buscaAutomaticaRef.current = null;
-    }
-
-    if (!open || carregando) return;
-
-    // Não busca se o termo inicial ainda está sendo aplicado
-    if (termoInicial && !termoInicialAplicado) return;
-
-    // Cria uma string única com todos os filtros para verificar se mudou
-    const combinacaoFiltros = `${filtroOrgao.trim()}|${filtroUASG.trim()}|${filtroCidade.trim()}|${filtroUF}|${filtroFone.trim()}`;
-    
-    // Não busca se já buscou para esta mesma combinação de filtros
-    if (combinacaoFiltros === ultimaCombinacaoFiltrosRef.current) return;
-
-    // Busca automaticamente após um delay quando detecta mudança em qualquer input
-    buscaAutomaticaRef.current = setTimeout(() => {
-      // Verifica novamente se os filtros ainda são os mesmos (evita busca com valores antigos)
-      const combinacaoAtual = `${filtroOrgao.trim()}|${filtroUASG.trim()}|${filtroCidade.trim()}|${filtroUF}|${filtroFone.trim()}`;
+    if (dialogContentRef.current && open) {
+      // Remove qualquer transição/animação para movimento seco
+      dialogContentRef.current.style.transition = 'none';
+      // Aplica o transform imediatamente
+      dialogContentRef.current.style.transform = `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px))`;
       
-      if (!carregando && combinacaoAtual === combinacaoFiltros) {
-        ultimaCombinacaoFiltrosRef.current = combinacaoAtual;
-        buscarOrgaos();
-      }
-      buscaAutomaticaRef.current = null;
-    }, 500); // Delay de 500ms para evitar muitas requisições enquanto o usuário digita
+      // Garante que o transform seja aplicado após o elemento estar totalmente renderizado
+      const timeout = setTimeout(() => {
+        if (dialogContentRef.current) {
+          dialogContentRef.current.style.transform = `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px))`;
+        }
+      }, 10);
+      return () => clearTimeout(timeout);
+    }
+  }, [position, open]);
 
-    return () => {
-      if (buscaAutomaticaRef.current) {
-        clearTimeout(buscaAutomaticaRef.current);
-        buscaAutomaticaRef.current = null;
+  // Handlers para arrastar o dialog
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (dialogContentRef.current) {
+      setIsDragging(true);
+      const rect = dialogContentRef.current.getBoundingClientRect();
+      // Calcula o offset do mouse em relação ao centro do dialog
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      setDragStart({
+        x: e.clientX - centerX,
+        y: e.clientY - centerY,
+      });
+    }
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDragging && dialogContentRef.current) {
+        // Calcula a nova posição relativa ao centro da tela
+        const newX = e.clientX - window.innerWidth / 2 - dragStart.x;
+        const newY = e.clientY - window.innerHeight / 2 - dragStart.y;
+        setPosition({ x: newX, y: newY });
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroOrgao, filtroUASG, filtroCidade, filtroUF, filtroFone, open, carregando, termoInicial, termoInicialAplicado]);
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = 'none'; // Previne seleção de texto durante o arrasto
+    } else {
+      document.body.style.userSelect = '';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = '';
+    };
+  }, [isDragging, dragStart]);
+
+  // Removida a busca automática - agora só busca quando o usuário clicar em Buscar ou apertar Enter
 
   const handleBuscar = () => {
+    // Atualiza a referência da última combinação de filtros antes de buscar
+    const combinacaoAtual = `${filtroOrgao.trim()}|${filtroUASG.trim()}|${filtroCidade.trim()}|${filtroUF}|${filtroFone.trim()}`;
+    ultimaCombinacaoFiltrosRef.current = combinacaoAtual;
     buscarOrgaos();
   };
 
@@ -247,18 +290,35 @@ export function BuscarOrgaoPopup({
   };
 
   const handleCadastrar = () => {
-    navigate('/orgaos/cadastro');
-    onOpenChange(false);
+    setCadastrarPopupOpen(true);
+  };
+
+  const handleOrgaoCadastrado = () => {
+    // Recarrega a lista de órgãos após cadastro
+    buscarOrgaos();
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[1200px] max-w-[95vw] p-0 gap-0 max-h-[90vh] flex flex-col">
-        <DialogHeader className="p-4 border-b">
-          <DialogTitle className="text-lg font-semibold text-[#262626]">
-            Pesquisa Avançada de Órgãos → {orgaos.length}
-          </DialogTitle>
-        </DialogHeader>
+      <DialogPortal>
+        {/* Sem overlay - fundo transparente */}
+        <DialogPrimitive.Content
+          ref={dialogContentRef}
+          className={cn(
+            "fixed left-[50%] top-[50%] z-50 w-full sm:max-w-[1200px] max-w-[95vw] max-h-[90vh] flex flex-col gap-0 border bg-background p-0 shadow-2xl sm:rounded-lg",
+            "data-[state=open]:opacity-100 data-[state=closed]:opacity-0"
+          )}
+          style={{ transition: 'none' }}
+        >
+          <DialogHeader 
+            className={`p-4 border-b select-none ${isDragging ? 'cursor-grabbing' : 'cursor-move'}`}
+            onMouseDown={handleMouseDown}
+          >
+            <DialogTitle className="text-lg font-semibold text-[#262626]">
+              Pesquisa Avançada de Órgãos → {orgaos.length}
+            </DialogTitle>
+          </DialogHeader>
 
         <div className="flex-1 overflow-hidden flex flex-col">
           {/* Tabela de resultados */}
@@ -413,7 +473,20 @@ export function BuscarOrgaoPopup({
             </div>
           </div>
         </div>
-      </DialogContent>
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none z-10">
+          <X className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
+
+    {/* Popup de cadastro de órgão */}
+    <CadastrarOrgaoPopup
+      open={cadastrarPopupOpen}
+      onOpenChange={setCadastrarPopupOpen}
+      onOrgaoCadastrado={handleOrgaoCadastrado}
+    />
+    </>
   );
 }

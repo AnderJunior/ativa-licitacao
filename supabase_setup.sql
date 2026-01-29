@@ -3,10 +3,14 @@
 -- ============================================
 
 -- Enum para roles de usuário
-CREATE TYPE public.app_role AS ENUM ('admin', 'user');
+DO $$ BEGIN
+    CREATE TYPE public.app_role AS ENUM ('admin', 'user');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- Tabela de roles de usuário
-CREATE TABLE public.user_roles (
+CREATE TABLE IF NOT EXISTS public.user_roles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
     role app_role NOT NULL DEFAULT 'user',
@@ -33,7 +37,7 @@ AS $$
 $$;
 
 -- Profiles
-CREATE TABLE public.profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL UNIQUE,
     full_name TEXT,
@@ -66,7 +70,7 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- Tipo Licitações
-CREATE TABLE public.tipo_licitacoes (
+CREATE TABLE IF NOT EXISTS public.tipo_licitacoes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sigla TEXT UNIQUE NOT NULL,
     descricao TEXT,
@@ -75,8 +79,18 @@ CREATE TABLE public.tipo_licitacoes (
 
 ALTER TABLE public.tipo_licitacoes ENABLE ROW LEVEL SECURITY;
 
+-- Sites
+CREATE TABLE IF NOT EXISTS public.sites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    dominio TEXT NOT NULL,
+    site TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.sites ENABLE ROW LEVEL SECURITY;
+
 -- Grupo de Órgãos
-CREATE TABLE public.grupo_de_orgaos (
+CREATE TABLE IF NOT EXISTS public.grupo_de_orgaos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome TEXT UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
@@ -85,7 +99,7 @@ CREATE TABLE public.grupo_de_orgaos (
 ALTER TABLE public.grupo_de_orgaos ENABLE ROW LEVEL SECURITY;
 
 -- Órgãos
-CREATE TABLE public.orgaos (
+CREATE TABLE IF NOT EXISTS public.orgaos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome_orgao TEXT NOT NULL,
     uf TEXT,
@@ -105,7 +119,7 @@ CREATE TABLE public.orgaos (
 ALTER TABLE public.orgaos ENABLE ROW LEVEL SECURITY;
 
 -- Join table para órgãos e grupos (N:N)
-CREATE TABLE public.orgaos_grupos (
+CREATE TABLE IF NOT EXISTS public.orgaos_grupos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     orgao_id UUID REFERENCES public.orgaos(id) ON DELETE CASCADE NOT NULL,
     grupo_id UUID REFERENCES public.grupo_de_orgaos(id) ON DELETE CASCADE NOT NULL,
@@ -116,7 +130,7 @@ CREATE TABLE public.orgaos_grupos (
 ALTER TABLE public.orgaos_grupos ENABLE ROW LEVEL SECURITY;
 
 -- Ramos de Atividade (árvore)
-CREATE TABLE public.ramos_de_atividade (
+CREATE TABLE IF NOT EXISTS public.ramos_de_atividade (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome TEXT NOT NULL,
     e_grupo BOOLEAN DEFAULT false,
@@ -129,7 +143,7 @@ CREATE TABLE public.ramos_de_atividade (
 ALTER TABLE public.ramos_de_atividade ENABLE ROW LEVEL SECURITY;
 
 -- Contratações (Licitações)
-CREATE TABLE public.contratacoes (
+CREATE TABLE IF NOT EXISTS public.contratacoes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     cd_pn TEXT UNIQUE,
     cadastrado BOOLEAN DEFAULT false,
@@ -175,7 +189,7 @@ CREATE TABLE public.contratacoes (
 ALTER TABLE public.contratacoes ENABLE ROW LEVEL SECURITY;
 
 -- Join table para contratações e ramos (marcações)
-CREATE TABLE public.contratacoes_marcacoes (
+CREATE TABLE IF NOT EXISTS public.contratacoes_marcacoes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contratacao_id UUID REFERENCES public.contratacoes(id) ON DELETE CASCADE NOT NULL,
     ramo_id UUID REFERENCES public.ramos_de_atividade(id) ON DELETE CASCADE NOT NULL,
@@ -234,6 +248,19 @@ ON public.tipo_licitacoes FOR UPDATE TO authenticated USING (true);
 
 CREATE POLICY "Authenticated users can delete tipo_licitacoes" 
 ON public.tipo_licitacoes FOR DELETE TO authenticated USING (true);
+
+-- Sites
+CREATE POLICY "Authenticated users can view sites" 
+ON public.sites FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert sites" 
+ON public.sites FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update sites" 
+ON public.sites FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete sites" 
+ON public.sites FOR DELETE TO authenticated USING (true);
 
 -- Grupo de Órgãos
 CREATE POLICY "Authenticated users can view grupo_de_orgaos" 

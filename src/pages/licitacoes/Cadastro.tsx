@@ -98,6 +98,7 @@ export default function LicitacaoCadastro() {
   const [tipoPopupOpen, setTipoPopupOpen] = useState(false);
   const [tipoSearchTerm, setTipoSearchTerm] = useState('');
   const [orgaoPopupOpen, setOrgaoPopupOpen] = useState(false);
+  const [orgaoSearchTerm, setOrgaoSearchTerm] = useState('');
   const [buscarOrgaoPopupOpen, setBuscarOrgaoPopupOpen] = useState(false);
   const [termoInicialOrgao, setTermoInicialOrgao] = useState<string>('');
   const [conteudoIgnorado, setConteudoIgnorado] = useState<string>(''); // Rastreia conteúdo que o usuário fechou o popup
@@ -699,9 +700,10 @@ export default function LicitacaoCadastro() {
     const modalidadeDescricao = licitacao.modalidade || licitacao.modalidade_ativa || 'Não informado';
     const numLicitacao = licitacao.num_licitacao || 'S/N';
     const anoCompra = licitacao.ano_compra || new Date().getFullYear();
+    const titulo = licitacao.titulo || 'Não informado';
 
     const linhas = [
-      `${modalidadeDescricao} – Nº ${licitacao.sequencial_compra}/${anoCompra}`,
+      `${modalidadeDescricao} – Nº ${titulo}/${anoCompra}`,
       `Local: ${licitacao.municipio || 'Não informado'}/${licitacao.uf || ''}`,
       `Órgão: ${licitacao.orgao_pncp || 'Não informado'}`,
       `Unidade Compradora: ${licitacao.un_cod || ''} – ${licitacao.unidade || 'Não informado'}`,
@@ -2046,17 +2048,19 @@ export default function LicitacaoCadastro() {
                           }
                         }}
                       />
-                      <CommandList>
-                        <CommandEmpty>Nenhuma UF encontrada.</CommandEmpty>
-                        <CommandGroup className="p-0">
-                          {UFS
-                            .filter((uf) => {
-                              if (!pncpSearchTerm) return true;
-                              const searchLower = pncpSearchTerm.toLowerCase();
-                              const ufLower = uf.toLowerCase();
-                              return ufLower.startsWith(searchLower);
-                            })
-                            .map((uf) => {
+                      {pncpSearchTerm && (
+                        <CommandList>
+                          <CommandEmpty>Nenhuma UF encontrada.</CommandEmpty>
+                          <CommandGroup className="p-0">
+                            {UFS
+                              .filter((uf) => {
+                                if (!pncpSearchTerm) return false;
+                                const searchLower = pncpSearchTerm.toLowerCase();
+                                const ufLower = uf.toLowerCase();
+                                return ufLower.startsWith(searchLower);
+                              })
+                              .slice(0, 1) // Mostra apenas 1 item
+                              .map((uf) => {
                               const handleSelect = () => {
                                 setFormData({ ...formData, pncp: uf });
                                 setPncpPopupOpen(false);
@@ -2085,8 +2089,9 @@ export default function LicitacaoCadastro() {
                                 </CommandItem>
                               );
                             })}
-                        </CommandGroup>
-                      </CommandList>
+                          </CommandGroup>
+                        </CommandList>
+                      )}
                     </Command>
                   </PopoverContent>
                 </Popover>
@@ -2194,18 +2199,20 @@ export default function LicitacaoCadastro() {
                         }
                       }}
                     />
-                    <CommandList>
-                      <CommandEmpty>Nenhum tipo encontrado.</CommandEmpty>
-                      <CommandGroup className="p-0">
-                        {tipos
-                          .filter((tipo) => {
-                            if (!tipoSearchTerm) return true;
-                            // Filtra apenas os que começam com o termo de busca (case insensitive)
-                            const searchLower = tipoSearchTerm.toLowerCase();
-                            const siglaLower = tipo.sigla?.toLowerCase() || '';
-                            return siglaLower.startsWith(searchLower);
-                          })
-                          .map((tipo) => {
+                    {tipoSearchTerm && (
+                      <CommandList>
+                        <CommandEmpty>Nenhum tipo encontrado.</CommandEmpty>
+                        <CommandGroup className="p-0">
+                          {tipos
+                            .filter((tipo) => {
+                              if (!tipoSearchTerm) return false;
+                              // Filtra apenas os que começam com o termo de busca (case insensitive)
+                              const searchLower = tipoSearchTerm.toLowerCase();
+                              const siglaLower = tipo.sigla?.toLowerCase() || '';
+                              return siglaLower.startsWith(searchLower);
+                            })
+                            .slice(0, 1) // Mostra apenas 1 item
+                            .map((tipo) => {
                             const handleSelect = () => {
                               const now = Date.now();
                               const lastTime = lastSelectTimeMap.current.get(tipo.id) || 0;
@@ -2267,8 +2274,9 @@ export default function LicitacaoCadastro() {
                               </CommandItem>
                             );
                           })}
-                      </CommandGroup>
-                    </CommandList>
+                        </CommandGroup>
+                      </CommandList>
+                    )}
                   </Command>
                 </PopoverContent>
               </Popover>
@@ -2379,7 +2387,15 @@ export default function LicitacaoCadastro() {
           <div className="flex-1 flex flex-col min-h-0">
             <Label htmlFor="orgao" className="text-sm font-normal mb-2 block text-[#262626]">Orgão</Label>
             <div className="flex gap-2 mb-2">
-              <Popover open={orgaoPopupOpen} onOpenChange={setOrgaoPopupOpen}>
+              <Popover 
+                open={orgaoPopupOpen} 
+                onOpenChange={(open) => {
+                  setOrgaoPopupOpen(open);
+                  if (!open) {
+                    setOrgaoSearchTerm('');
+                  }
+                }}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
@@ -2412,6 +2428,10 @@ export default function LicitacaoCadastro() {
                     <CommandInput 
                       ref={orgaoSearchInputRef}
                       placeholder="Buscar orgão..." 
+                      value={orgaoSearchTerm}
+                      onValueChange={(value) => {
+                        setOrgaoSearchTerm(value);
+                      }}
                       autoFocus={orgaoPopupOpen}
                       onKeyDown={(e) => {
                         if (e.key === 'Tab' && !e.shiftKey) {
@@ -2440,10 +2460,19 @@ export default function LicitacaoCadastro() {
                         }
                       }}
                     />
-                    <CommandList>
-                      <CommandEmpty>Nenhum orgão encontrado.</CommandEmpty>
-                      <CommandGroup className="p-0">
-                        {orgaos.map((orgao) => {
+                    {orgaoSearchTerm && (
+                      <CommandList>
+                        <CommandEmpty>Nenhum orgão encontrado.</CommandEmpty>
+                        <CommandGroup className="p-0">
+                          {orgaos
+                            .filter((orgao) => {
+                              if (!orgaoSearchTerm) return false;
+                              const searchLower = orgaoSearchTerm.toLowerCase();
+                              const nomeLower = orgao.nome_orgao?.toLowerCase() || '';
+                              return nomeLower.includes(searchLower);
+                            })
+                            .slice(0, 1) // Mostra apenas 1 item
+                            .map((orgao) => {
                           const handleSelect = () => {
                             const now = Date.now();
                             const lastTime = lastSelectTimeMap.current.get(orgao.id) || 0;
@@ -2500,8 +2529,9 @@ export default function LicitacaoCadastro() {
                             </CommandItem>
                           );
                         })}
-                      </CommandGroup>
-                    </CommandList>
+                        </CommandGroup>
+                      </CommandList>
+                    )}
                   </Command>
                 </PopoverContent>
               </Popover>

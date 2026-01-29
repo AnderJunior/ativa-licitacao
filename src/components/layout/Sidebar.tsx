@@ -12,7 +12,9 @@ import {
   Info,
   AlertCircle,
   UserX,
-  UsersRound
+  UsersRound,
+  Building,
+  Globe
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -47,6 +49,13 @@ const menuItems: MenuItem[] = [
       { label: 'Cadastro', path: '/orgaos/cadastro', icon: Plus },
       { label: 'Sem IBGE', path: '/orgaos/sem-ibge', icon: UserX },
       { label: 'Agrupamentos', path: '/orgaos/agrupamentos', icon: UsersRound },
+    ],
+  },
+  {
+    label: 'Empresa',
+    icon: Building,
+    children: [
+      { label: 'Sites', path: '/empresa/sites', icon: Globe },
     ],
   },
 ];
