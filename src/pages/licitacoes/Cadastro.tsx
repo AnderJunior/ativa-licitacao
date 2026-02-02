@@ -15,14 +15,16 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw } from 'lucide-react';
+import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LinksPopup } from '@/components/licitacoes/LinksPopup';
 import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPopup';
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
+import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useResizable } from '@/hooks/use-resizable';
 
 interface Contratacao {
   id: string;
@@ -101,9 +103,19 @@ export default function LicitacaoCadastro() {
   const [orgaoSearchTerm, setOrgaoSearchTerm] = useState('');
   const [buscarOrgaoPopupOpen, setBuscarOrgaoPopupOpen] = useState(false);
   const [termoInicialOrgao, setTermoInicialOrgao] = useState<string>('');
+  const [buscarTipoPopupOpen, setBuscarTipoPopupOpen] = useState(false);
+  const [termoInicialTipo, setTermoInicialTipo] = useState<string>('');
   const [conteudoIgnorado, setConteudoIgnorado] = useState<string>(''); // Rastreia conteúdo que o usuário fechou o popup
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [duplicidadeDialogOpen, setDuplicidadeDialogOpen] = useState(false);
+  const [atividadesVaziasDialogOpen, setAtividadesVaziasDialogOpen] = useState(false);
+  
+  // Estados para preenchimento automático
+  const [autoPreencherUASG, setAutoPreencherUASG] = useState(false);
+  const [autoPreencherDATA, setAutoPreencherDATA] = useState(false);
+  const [autoPreencherTIPO, setAutoPreencherTIPO] = useState(false);
+  const [revisao, setRevisao] = useState(false);
   
   // Estados para pesquisa por digitação
   const [searchBuffer, setSearchBuffer] = useState('');
@@ -112,6 +124,25 @@ export default function LicitacaoCadastro() {
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastKeyTimeRef = useRef<number>(0);
   const atividadesScrollRef = useRef<HTMLDivElement>(null);
+  
+  // Hook para redimensionar a área de atividades
+  const atividadesResizable = useResizable({
+    initialWidth: 350,
+    minWidth: 250,
+    maxWidth: 600,
+    storageKey: 'licitacao-atividades-width',
+  });
+
+  // Garante que o valor nunca ultrapasse 600px (proteção adicional)
+  useEffect(() => {
+    if (atividadesResizable.width > 600) {
+      // Se por algum motivo o valor estiver acima do limite, corrige
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('licitacao-atividades-width', '600');
+      }
+    }
+  }, [atividadesResizable.width]);
+
   // Map para rastrear últimos tempos de seleção e evitar múltiplas chamadas
   const lastSelectTimeMap = useRef<Map<string, number>>(new Map());
   // Refs para focar nos inputs de pesquisa quando os dropdowns abrirem
@@ -302,7 +333,16 @@ export default function LicitacaoCadastro() {
   }, [orgaoPopupOpen]);
 
   // Valida o orgão quando os orgãos são carregados e há uma licitação com orgão preenchido
+  // Se vier da consulta (tem id na URL), sempre valida. Se for busca PNCP, só valida se o checkbox UASG estiver marcado
   useEffect(() => {
+    // Verifica se vem da consulta (tem id na URL sem naoPreencherNumero)
+    const vemDaConsulta = contratacaoId && searchParams.get('naoPreencherNumero') !== 'true';
+    
+    // Se não vier da consulta e o checkbox não estiver marcado, não valida
+    if (!vemDaConsulta && !autoPreencherUASG) {
+      return;
+    }
+    
     if (orgaos.length > 0 && formData.id && formData.orgao_pncp) {
       // Verifica se o orgão existe na lista de orgãos cadastrados
       const orgaoEncontrado = orgaos.find(o => 
@@ -331,7 +371,7 @@ export default function LicitacaoCadastro() {
         }
       }
     }
-  }, [orgaos.length, formData.id, formData.orgao_pncp]);
+  }, [orgaos.length, formData.id, formData.orgao_pncp, autoPreencherUASG, contratacaoId, searchParams]);
 
   // Detecta quando o texto do textarea corresponde apenas a um nome de órgão e abre o popup automaticamente
   useEffect(() => {
@@ -856,17 +896,69 @@ export default function LicitacaoCadastro() {
       // Se não tiver UF na licitação, mantém a UF anteriormente selecionada no formulário
       const ufParaManter = data.uf || formData.pncp || '';
 
+      // Verifica se é uma busca do PNCP (tem naoPreencherNumero) ou se vem da consulta
+      // Se vem da consulta (sem naoPreencherNumero), sempre preenche automaticamente
+      // Se é busca do PNCP (com naoPreencherNumero), respeita os checkboxes
+      const isBuscaPNCP = naoPreencherNumero;
+
+      // Prepara os valores baseados nos checkboxes de preenchimento automático
+      // Se vier da consulta, sempre preenche. Se for busca PNCP, respeita os checkboxes
+      // UASG = Órgão, DATA = Data Licitação, TIPO = Tipo
+      let orgaoParaPreencher = '';
+      if (isBuscaPNCP) {
+        // Busca do PNCP: só preenche se checkbox UASG estiver marcado
+        orgaoParaPreencher = autoPreencherUASG ? orgaoValido : (formData.orgao_pncp || '');
+      } else {
+        // Vem da consulta: sempre preenche
+        orgaoParaPreencher = orgaoValido;
+      }
+      
+      // Lógica de preenchimento da data: se for busca PNCP, respeita o checkbox DATA
+      let dataParaPreencher = '';
+      if (isBuscaPNCP) {
+        // Busca do PNCP: só preenche se checkbox DATA estiver marcado
+        if (autoPreencherDATA && data.dt_encerramento_proposta) {
+          dataParaPreencher = formatarDataISO(data.dt_encerramento_proposta);
+        } else {
+          // Se checkbox DATA não está marcado, mantém o valor atual do formulário
+          dataParaPreencher = formData.dt_publicacao || '';
+        }
+      } else {
+        // Vem da consulta: sempre preenche se houver data disponível
+        if (data.dt_encerramento_proposta) {
+          dataParaPreencher = formatarDataISO(data.dt_encerramento_proposta);
+        }
+      }
+      
+      // Lógica de preenchimento do tipo: se for busca PNCP, respeita o checkbox TIPO
+      let tipoParaPreencher = '';
+      let descricaoModalidadeParaPreencher = null;
+      if (isBuscaPNCP) {
+        // Busca do PNCP: só preenche se checkbox TIPO estiver marcado
+        if (autoPreencherTIPO) {
+          tipoParaPreencher = tipoId || '';
+          descricaoModalidadeParaPreencher = tipoId || null;
+        } else {
+          // Se checkbox TIPO não está marcado, mantém o valor atual do formulário
+          tipoParaPreencher = formData.modalidade || '';
+          descricaoModalidadeParaPreencher = formData.descricao_modalidade || null;
+        }
+      } else {
+        // Vem da consulta: sempre preenche
+        tipoParaPreencher = tipoId || '';
+        descricaoModalidadeParaPreencher = tipoId || null;
+      }
+
       setFormData({
         ...data,
         num_ativa: numAtivaFormatado,
         cadastrado_por: nomeUsuario,
         pncp: ufParaManter, // Mantém a UF selecionada
-        modalidade: tipoId || '', // Usa apenas o tipo que vem do banco
-        descricao_modalidade: tipoId || null,
-        orgao_pncp: orgaoValido,
-        dt_publicacao: data.dt_encerramento_proposta 
-          ? formatarDataISO(data.dt_encerramento_proposta)
-          : new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+        modalidade: tipoParaPreencher,
+        descricao_modalidade: descricaoModalidadeParaPreencher,
+        orgao_pncp: orgaoParaPreencher, // Preenche automaticamente se vier da consulta, ou respeita checkbox se for busca PNCP
+        dt_publicacao: dataParaPreencher, // Preenche automaticamente se vier da consulta, ou respeita checkbox se for busca PNCP
+        dt_vinculo_ativa: data.dt_vinculo_ativa || null, // Mantém dt_vinculo_ativa do banco
         link_processo: data.link_processo || null,
         links: data.links || [],
         conteudo: conteudoFormatado,
@@ -1036,6 +1128,7 @@ export default function LicitacaoCadastro() {
       dt_publicacao: licitacao.dt_encerramento_proposta 
         ? formatarDataISO(licitacao.dt_encerramento_proposta)
         : '',
+      dt_vinculo_ativa: licitacao.dt_vinculo_ativa || null, // Inclui dt_vinculo_ativa se existir
       link_processo: licitacao.link_processo || null,
       links: licitacao.links || [],
       conteudo: conteudoFormatado,
@@ -1049,6 +1142,17 @@ export default function LicitacaoCadastro() {
   };
 
   const handleSave = async () => {
+    // Verifica se há atividades selecionadas antes de salvar
+    if (selectedRamos.length === 0) {
+      setAtividadesVaziasDialogOpen(true);
+      return;
+    }
+
+    // Se chegou aqui, há atividades selecionadas, então salva normalmente
+    await salvarLicitacao();
+  };
+
+  const salvarLicitacao = async () => {
     setSaving(true);
     try {
       // Validação dos campos obrigatórios antes de salvar
@@ -1070,16 +1174,6 @@ export default function LicitacaoCadastro() {
         return;
       }
 
-      // Remove campos que não devem ser salvos na tabela
-      // cadastrado_por é apenas para exibição, não deve ser salvo
-      // pncp é apenas um campo auxiliar do formulário, na tabela é cd_pn
-      // modalidade e modalidade_ativa não devem ser atualizados ao salvar
-      // id não deve ser incluído no INSERT (banco gera automaticamente) nem no UPDATE (usado apenas na WHERE)
-      // num_ativa é apenas para exibição (formato formatado), não deve ser salvo diretamente
-      // O num_ativa será calculado e salvo apenas para cadastros manuais novos através de numAtivaParaSalvar
-      const formDataAny = formData as any;
-      const { cadastrado_por, pncp, id, modalidade, modalidade_ativa, num_ativa, ...formDataToSave } = formDataAny;
-      
       // Busca o tipo de licitação selecionado
       // descricao_modalidade deve receber o ID (UUID) do tipo, não a descrição!
       const tipoSelecionado = tipos.find(t => t.id === formData.modalidade);
@@ -1098,6 +1192,110 @@ export default function LicitacaoCadastro() {
       if (orgaoValido) {
         orgaoParaSalvar = orgaoValido.nome_orgao;
       }
+
+      // Verificação de duplicidade: Tipo, Número (sequencial_compra + ano_compra), Órgão e Conteúdo
+      const licitacaoId = formData.id || contratacaoId;
+      const conteudoParaVerificar = (formData.conteudo || '').trim();
+      
+      // Função para normalizar strings (remove acentos, converte para minúsculas, remove espaços extras)
+      const normalizarString = (str: string | null | undefined): string => {
+        if (!str) return '';
+        return String(str)
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '') // Remove acentos
+          .replace(/\r\n/g, ' ') // Substitui quebras de linha Windows por espaço
+          .replace(/\n/g, ' ') // Substitui quebras de linha Unix por espaço
+          .replace(/\r/g, ' ') // Substitui carriage return por espaço
+          .replace(/\s+/g, ' ') // Substitui múltiplos espaços por um único espaço
+          .trim();
+      };
+
+      // Normaliza o conteúdo para comparação
+      const conteudoNormalizado = normalizarString(conteudoParaVerificar);
+      
+      // Busca licitações com os mesmos dados básicos (Tipo, Número, Órgão)
+      // Garante que os valores numéricos sejam do tipo correto
+      const sequencialCompra = Number(formData.sequencial_compra);
+      const anoCompra = Number(formData.ano_compra);
+      
+      let query = supabase
+        .from('contratacoes')
+        .select('id, descricao_modalidade, sequencial_compra, ano_compra, orgao_pncp, conteudo, textos_cadastro_manual')
+        .eq('descricao_modalidade', tipoIdParaSalvar)
+        .eq('sequencial_compra', sequencialCompra)
+        .eq('ano_compra', anoCompra);
+
+      const { data: licitacoesCandidatas, error: errorVerificacao } = await query;
+
+      if (errorVerificacao) {
+        console.error('Erro ao verificar duplicidade:', errorVerificacao);
+        toast.error('Erro ao verificar duplicidade. Tente novamente.');
+        setSaving(false);
+        return;
+      }
+
+      // Log para debug
+      console.log('Verificação de duplicidade:', {
+        tipoId: tipoIdParaSalvar,
+        sequencial: sequencialCompra,
+        ano: anoCompra,
+        orgao: orgaoParaSalvar,
+        conteudoLength: conteudoParaVerificar.length,
+        candidatasEncontradas: licitacoesCandidatas?.length || 0,
+        licitacaoIdAtual: licitacaoId
+      });
+
+      // Filtra pelas que têm o mesmo órgão (comparação normalizada) e mesmo conteúdo
+      if (licitacoesCandidatas && licitacoesCandidatas.length > 0) {
+        const licitacaoDuplicada = licitacoesCandidatas.find((lic: any) => {
+          // Normaliza o órgão para comparação
+          const orgaoExistenteNormalizado = normalizarString(lic.orgao_pncp || '');
+          const orgaoNovoNormalizado = normalizarString(orgaoParaSalvar);
+          
+          // Se os órgãos não coincidem, não é duplicata
+          if (orgaoExistenteNormalizado !== orgaoNovoNormalizado) {
+            return false;
+          }
+
+          // Compara o conteúdo (pode estar em conteudo ou textos_cadastro_manual)
+          const conteudoExistente = (lic.conteudo || lic.textos_cadastro_manual || '').trim();
+          
+          // Normaliza o conteúdo existente para comparação
+          const conteudoExistenteNormalizado = normalizarString(conteudoExistente);
+          
+          // Compara os conteúdos normalizados (mesmo se ambos forem vazios, serão iguais)
+          return conteudoExistenteNormalizado === conteudoNormalizado;
+        });
+
+        // Se encontrou duplicata e não é a mesma licitação (não é UPDATE)
+        // Se licitacaoId for null/undefined, é um novo cadastro, então qualquer duplicata deve bloquear
+        if (licitacaoDuplicada && (!licitacaoId || licitacaoDuplicada.id !== licitacaoId)) {
+          console.log('Duplicata encontrada:', {
+            idExistente: licitacaoDuplicada.id,
+            idAtual: licitacaoId,
+            tipo: tipoIdParaSalvar,
+            sequencial: sequencialCompra,
+            ano: anoCompra,
+            orgao: orgaoParaSalvar,
+            conteudoExistenteLength: (licitacaoDuplicada.conteudo || licitacaoDuplicada.textos_cadastro_manual || '').length,
+            conteudoNovoLength: conteudoParaVerificar.length
+          });
+          setSaving(false);
+          setDuplicidadeDialogOpen(true);
+          return;
+        }
+      }
+
+      // Remove campos que não devem ser salvos na tabela
+      // cadastrado_por é apenas para exibição, não deve ser salvo
+      // pncp é apenas um campo auxiliar do formulário, na tabela é cd_pn
+      // modalidade e modalidade_ativa não devem ser atualizados ao salvar
+      // id não deve ser incluído no INSERT (banco gera automaticamente) nem no UPDATE (usado apenas na WHERE)
+      // num_ativa é apenas para exibição (formato formatado), não deve ser salvo diretamente
+      // O num_ativa será calculado e salvo apenas para cadastros manuais novos através de numAtivaParaSalvar
+      const formDataAny = formData as any;
+      const { cadastrado_por, pncp, id, modalidade, modalidade_ativa, num_ativa, ...formDataToSave } = formDataAny;
 
       // Determina o tipo de cadastro e se é manual:
       // - PNCP: Licitação vem da automação externa (já existe no banco com tipo_cadastro = 'PNCP')
@@ -1244,7 +1442,7 @@ export default function LicitacaoCadastro() {
 
       // Remove o id se ainda estiver presente (não deve ser salvo no objeto)
       // Mas salvamos a referência para determinar se é UPDATE ou INSERT
-      const licitacaoId = formData.id || contratacaoId;
+      // licitacaoId já foi declarado anteriormente na verificação de duplicidade
       delete dataToSave.id;
 
       let contratacaoIdToUse = licitacaoId;
@@ -1331,6 +1529,17 @@ export default function LicitacaoCadastro() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Função para lidar com a confirmação do popup de atividades vazias
+  const handleConfirmarAtividadesVazias = async () => {
+    setAtividadesVaziasDialogOpen(false);
+    toast.info('A administração irá ajudar você a marcar a atividade correta.');
+    await salvarLicitacao();
+  };
+
+  const handleCancelarAtividadesVazias = () => {
+    setAtividadesVaziasDialogOpen(false);
   };
 
   // Atalho Ctrl+S para salvar licitação
@@ -1442,6 +1651,258 @@ export default function LicitacaoCadastro() {
     setBuscarPopupOpen(false);
     
     toast.success('Todos os campos foram limpos!');
+  };
+
+  // Extrai o número do num_ativa (formato: "numero.mes/ano" -> retorna apenas o número)
+  // Pode receber string, número ou null/undefined
+  const extrairNumeroAtiva = (numAtiva: string | number | null | undefined): number | null => {
+    if (numAtiva === null || numAtiva === undefined) return null;
+    
+    // Se for número, retorna diretamente
+    if (typeof numAtiva === 'number') {
+      return isNaN(numAtiva) ? null : numAtiva;
+    }
+    
+    // Se for string, processa
+    const numAtivaStr = String(numAtiva).trim();
+    if (numAtivaStr === '') return null;
+    
+    // Remove espaços e pega a parte antes do ponto
+    const parteNumerica = numAtivaStr.split('.')[0];
+    const numero = parseInt(parteNumerica, 10);
+    return isNaN(numero) ? null : numero;
+  };
+
+  // Busca todas as licitações com num_ativa usando paginação (Supabase limita a 1000 por padrão)
+  const buscarTodasLicitacoesComNumAtiva = async () => {
+    const todasLicitacoes: Array<{ id: string; num_ativa: string | number | null }> = [];
+    let from = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('contratacoes')
+        .select('id, num_ativa')
+        .not('num_ativa', 'is', null)
+        .order('num_ativa', { ascending: true }) // Ordena por num_ativa antes de paginar
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        throw error;
+      }
+
+      if (data && data.length > 0) {
+        todasLicitacoes.push(...data);
+        from += pageSize;
+        hasMore = data.length === pageSize; // Se retornou menos que pageSize, não há mais registros
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return todasLicitacoes;
+  };
+
+  const handleAnterior = async () => {
+    setLoading(true);
+    try {
+      // Busca o num_ativa atual da licitação no banco (não do formData formatado)
+      let numAtivaAtual: number | null = null;
+      if (contratacaoId) {
+        const { data: licitacaoAtual } = await supabase
+          .from('contratacoes')
+          .select('num_ativa')
+          .eq('id', contratacaoId)
+          .maybeSingle();
+        
+        if (licitacaoAtual?.num_ativa) {
+          numAtivaAtual = extrairNumeroAtiva(licitacaoAtual.num_ativa);
+        }
+      }
+      
+      // Se não encontrou no banco, tenta extrair do formData (pode estar formatado)
+      if (numAtivaAtual === null && formData.num_ativa) {
+        numAtivaAtual = extrairNumeroAtiva(formData.num_ativa);
+      }
+      
+      // Busca todas as licitações com num_ativa usando paginação (para buscar todos os 7001 registros)
+      let todasLicitacoes;
+      try {
+        todasLicitacoes = await buscarTodasLicitacoesComNumAtiva();
+      } catch (error) {
+        console.error('Erro ao buscar licitações:', error);
+        toast.error('Erro ao buscar licitação anterior. Tente novamente.');
+        setLoading(false);
+        return;
+      }
+
+      if (!todasLicitacoes || todasLicitacoes.length === 0) {
+        toast.info('Nenhuma licitação cadastrada encontrada.');
+        setLoading(false);
+        return;
+      }
+
+      // Converte num_ativa para número e ordena numericamente
+      const licitacoesComNumero = todasLicitacoes
+        .map(l => {
+          const numExtraido = extrairNumeroAtiva(l.num_ativa);
+          return {
+            id: l.id,
+            numAtiva: numExtraido,
+            numAtivaOriginal: l.num_ativa
+          };
+        })
+        .filter(l => l.numAtiva !== null && typeof l.numAtiva === 'number');
+
+      // Ordena numericamente (garantindo que são números)
+      const licitacoesOrdenadas = licitacoesComNumero.sort((a, b) => {
+        const numA = a.numAtiva as number;
+        const numB = b.numAtiva as number;
+        return numA - numB;
+      });
+
+      if (licitacoesOrdenadas.length === 0) {
+        toast.info('Nenhuma licitação com número válido encontrada.');
+        setLoading(false);
+        return;
+      }
+
+
+      let licitacaoEncontrada;
+      if (numAtivaAtual === null) {
+        // Se não tem num_ativa atual, busca a menor (primeira)
+        licitacaoEncontrada = licitacoesOrdenadas[0];
+      } else {
+        // Busca a licitação com num_ativa menor (anterior)
+        // Filtra apenas as que são menores que o atual e pega a maior entre elas
+        const menoresQueAtual = licitacoesOrdenadas
+          .filter(l => (l.numAtiva as number) < numAtivaAtual)
+          .sort((a, b) => (b.numAtiva as number) - (a.numAtiva as number)); // Ordena decrescente
+        
+        licitacaoEncontrada = menoresQueAtual[0]; // Pega a primeira (maior entre as menores)
+      }
+
+      if (!licitacaoEncontrada || !licitacaoEncontrada.id) {
+        if (numAtivaAtual === null) {
+          toast.info('Nenhuma licitação cadastrada encontrada.');
+        } else {
+          toast.info('Não há licitação anterior.');
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Navega para a licitação encontrada
+      navigate(`/licitacoes/cadastro?id=${licitacaoEncontrada.id}`);
+    } catch (error) {
+      console.error('Erro ao buscar licitação anterior:', error);
+      toast.error('Erro ao buscar licitação anterior. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleProximo = async () => {
+    setLoading(true);
+    try {
+      // Busca o num_ativa atual da licitação no banco (não do formData formatado)
+      let numAtivaAtual: number | null = null;
+      if (contratacaoId) {
+        const { data: licitacaoAtual } = await supabase
+          .from('contratacoes')
+          .select('num_ativa')
+          .eq('id', contratacaoId)
+          .maybeSingle();
+        
+        if (licitacaoAtual?.num_ativa) {
+          numAtivaAtual = extrairNumeroAtiva(licitacaoAtual.num_ativa);
+        }
+      }
+      
+      // Se não encontrou no banco, tenta extrair do formData (pode estar formatado)
+      if (numAtivaAtual === null && formData.num_ativa) {
+        numAtivaAtual = extrairNumeroAtiva(formData.num_ativa);
+      }
+      
+      // Busca todas as licitações com num_ativa usando paginação (para buscar todos os 7001 registros)
+      let todasLicitacoes;
+      try {
+        todasLicitacoes = await buscarTodasLicitacoesComNumAtiva();
+      } catch (error) {
+        console.error('Erro ao buscar licitações:', error);
+        toast.error('Erro ao buscar próxima licitação. Tente novamente.');
+        setLoading(false);
+        return;
+      }
+
+      if (!todasLicitacoes || todasLicitacoes.length === 0) {
+        toast.info('Nenhuma licitação cadastrada encontrada.');
+        setLoading(false);
+        return;
+      }
+
+      // Converte num_ativa para número e ordena numericamente
+      const licitacoesComNumero = todasLicitacoes
+        .map(l => {
+          const numExtraido = extrairNumeroAtiva(l.num_ativa);
+          return {
+            id: l.id,
+            numAtiva: numExtraido,
+            numAtivaOriginal: l.num_ativa
+          };
+        })
+        .filter(l => l.numAtiva !== null && typeof l.numAtiva === 'number');
+
+      // Ordena numericamente (garantindo que são números)
+      const licitacoesOrdenadas = licitacoesComNumero.sort((a, b) => {
+        const numA = a.numAtiva as number;
+        const numB = b.numAtiva as number;
+        return numA - numB;
+      });
+
+      if (licitacoesOrdenadas.length === 0) {
+        toast.info('Nenhuma licitação com número válido encontrada.');
+        setLoading(false);
+        return;
+      }
+
+      let licitacaoEncontrada;
+      if (numAtivaAtual === null) {
+        // Se não tem num_ativa atual, busca a maior (última da lista ordenada)
+        // Garante que está pegando realmente o maior número
+        licitacaoEncontrada = licitacoesOrdenadas.reduce((maior, atual) => {
+          const numMaior = maior.numAtiva as number;
+          const numAtual = atual.numAtiva as number;
+          return numAtual > numMaior ? atual : maior;
+        }, licitacoesOrdenadas[0]);
+      } else {
+        // Busca a próxima sequencial: a menor entre as que são maiores que o atual
+        const maioresQueAtual = licitacoesOrdenadas
+          .filter(l => (l.numAtiva as number) > numAtivaAtual)
+          .sort((a, b) => (a.numAtiva as number) - (b.numAtiva as number));
+        
+        licitacaoEncontrada = maioresQueAtual[0]; // Pega a primeira (menor entre as maiores)
+      }
+
+      if (!licitacaoEncontrada || !licitacaoEncontrada.id) {
+        if (numAtivaAtual === null) {
+          toast.info('Nenhuma licitação cadastrada encontrada.');
+        } else {
+          toast.info('Não há próxima licitação.');
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Navega para a licitação encontrada
+      navigate(`/licitacoes/cadastro?id=${licitacaoEncontrada.id}`);
+    } catch (error) {
+      console.error('Erro ao buscar próxima licitação:', error);
+      toast.error('Erro ao buscar próxima licitação. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleNovo = () => {
@@ -1829,9 +2290,9 @@ export default function LicitacaoCadastro() {
 
   return (
     <MainLayout>
-      <div className="flex gap-[16px] h-full">
+      <div className="flex gap-[16px] h-full overflow-hidden">
         {/* Formulário Central */}
-        <div className="flex-1 bg-white rounded-lg border border-border pl-6 pr-6 pt-4 pb-4 flex flex-col relative">
+        <div className="flex-1 bg-white rounded-lg border border-border pl-6 pr-6 pt-4 pb-4 flex flex-col relative min-w-[600px] max-w-[1400px] overflow-x-auto">
           {/* Título e Botões de ação */}
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-xl font-bold text-[#262626]">Cadastros</h1>
@@ -1854,7 +2315,7 @@ export default function LicitacaoCadastro() {
                 variant="destructive" 
                 size="sm" 
                 onClick={() => setDeleteDialogOpen(true)}
-                disabled={!formData.num_ativa || formData.num_ativa.trim() === ''}
+                disabled={!contratacaoId || !formData.num_ativa || formData.num_ativa.trim() === ''}
                 className="bg-red-500 hover:bg-red-600 text-white px-4 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -1876,6 +2337,26 @@ export default function LicitacaoCadastro() {
               >
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 Salvar
+              </Button>
+              <Button 
+                variant="secondary" 
+                size="icon" 
+                onClick={handleAnterior}
+                disabled={loading}
+                className="rounded-full w-9 h-9 bg-gray-700 hover:bg-gray-800 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Anterior"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button 
+                variant="secondary" 
+                size="icon" 
+                onClick={handleProximo}
+                disabled={loading}
+                className="rounded-full w-9 h-9 bg-gray-700 hover:bg-gray-800 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Próximo"
+              >
+                <ChevronRight className="w-4 h-4" />
               </Button>
               <Button 
                 variant="destructive" 
@@ -1918,7 +2399,35 @@ export default function LicitacaoCadastro() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="pncp" className="text-sm font-normal text-[#262626]">PNCP</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="pncp" className="text-sm font-normal text-[#262626]">PNCP</Label>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <Checkbox
+                      id="auto-uasg"
+                      checked={autoPreencherUASG}
+                      onCheckedChange={(checked) => setAutoPreencherUASG(checked === true)}
+                    />
+                    <Label htmlFor="auto-uasg" className="text-xs font-normal cursor-pointer">UASG</Label>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Checkbox
+                      id="auto-data"
+                      checked={autoPreencherDATA}
+                      onCheckedChange={(checked) => setAutoPreencherDATA(checked === true)}
+                    />
+                    <Label htmlFor="auto-data" className="text-xs font-normal cursor-pointer">DATA</Label>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Checkbox
+                      id="auto-tipo"
+                      checked={autoPreencherTIPO}
+                      onCheckedChange={(checked) => setAutoPreencherTIPO(checked === true)}
+                    />
+                    <Label htmlFor="auto-tipo" className="text-xs font-normal cursor-pointer">TIPO</Label>
+                  </div>
+                </div>
+              </div>
               <div className="flex gap-2">
                 <Popover 
                   open={pncpPopupOpen} 
@@ -2119,170 +2628,193 @@ export default function LicitacaoCadastro() {
           </div>
 
           {/* Campos do meio */}
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="space-y-1">
+          <div className="grid grid-cols-3 gap-4 mb-4 items-end">
+            <div className="space-y-1 flex flex-col">
               <Label htmlFor="tipo" className="text-sm font-normal text-[#262626]">Tipo</Label>
-              <Popover 
-                open={tipoPopupOpen} 
-                onOpenChange={(open) => {
-                  setTipoPopupOpen(open);
-                  if (!open) {
-                    setTipoSearchTerm(''); // Limpa a busca quando fechar
-                  }
-                }}
-              >
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={tipoPopupOpen}
-                      className="h-9 w-full justify-between font-normal bg-white"
-                      tabIndex={2}
-                    >
-                    {formData.modalidade
-                      ? tipos.find((tipo) => tipo.id === formData.modalidade) 
-                        ? `${tipos.find((tipo) => tipo.id === formData.modalidade)?.sigla} - ${tipos.find((tipo) => tipo.id === formData.modalidade)?.descricao}`
-                        : "Selecione o Tipo"
-                      : "Selecione o Tipo"}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent 
-                  className="w-[--radix-popover-trigger-width] p-0" 
-                  align="start"
-                  onInteractOutside={(e) => {
-                    // Permite interação com elementos dentro do popover
-                    const target = e.target as HTMLElement;
-                    if (target.closest('[role="combobox"]')) {
-                      e.preventDefault();
+              <div className="flex gap-2">
+                <Popover 
+                  open={tipoPopupOpen} 
+                  onOpenChange={(open) => {
+                    setTipoPopupOpen(open);
+                    if (!open) {
+                      setTipoSearchTerm(''); // Limpa a busca quando fechar
                     }
                   }}
                 >
-                  <Command 
-                    filter={(value, search) => {
-                      // Desabilita o filtro padrão - vamos filtrar manualmente
-                      return 1;
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={tipoPopupOpen}
+                        className="h-9 flex-1 justify-between font-normal bg-white text-xs min-w-0"
+                        tabIndex={2}
+                      >
+                      <span className="truncate flex-1 text-left">
+                        {formData.modalidade
+                          ? tipos.find((tipo) => tipo.id === formData.modalidade) 
+                            ? `${tipos.find((tipo) => tipo.id === formData.modalidade)?.sigla} - ${tipos.find((tipo) => tipo.id === formData.modalidade)?.descricao}`
+                            : "Selecione o Tipo"
+                          : "Selecione o Tipo"}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 flex-shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent 
+                    className="w-[--radix-popover-trigger-width] p-0" 
+                    align="start"
+                    onInteractOutside={(e) => {
+                      // Permite interação com elementos dentro do popover
+                      const target = e.target as HTMLElement;
+                      if (target.closest('[role="combobox"]')) {
+                        e.preventDefault();
+                      }
                     }}
                   >
-                    <CommandInput 
-                      ref={tipoSearchInputRef}
-                      placeholder="Buscar tipo..." 
-                      value={tipoSearchTerm}
-                      onValueChange={(value) => {
-                        setTipoSearchTerm(value);
+                    <Command 
+                      filter={(value, search) => {
+                        // Desabilita o filtro padrão - vamos filtrar manualmente
+                        return 1;
                       }}
-                      autoFocus={tipoPopupOpen}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Tab' && !e.shiftKey) {
-                          e.preventDefault();
-                          // Encontra o item destacado na lista (cmdk usa data-selected ou aria-selected)
-                          const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
-                          if (selectedItem) {
-                            // Dispara o evento de seleção
-                            selectedItem.click();
-                          } else {
-                            // Se não houver item destacado, seleciona o primeiro da lista
-                            const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
-                            if (firstItem) {
-                              firstItem.click();
-                            }
-                          }
-                          // Fecha o popover
-                          setTipoPopupOpen(false);
-                          // Avança para o próximo campo (input número)
-                          setTimeout(() => {
-                            const numeroInput = document.getElementById('num_licitacao') as HTMLElement;
-                            if (numeroInput) {
-                              numeroInput.focus();
-                            }
-                          }, 100);
-                        }
-                      }}
-                    />
-                    {tipoSearchTerm && (
-                      <CommandList>
-                        <CommandEmpty>Nenhum tipo encontrado.</CommandEmpty>
-                        <CommandGroup className="p-0">
-                          {tipos
-                            .filter((tipo) => {
-                              if (!tipoSearchTerm) return false;
-                              // Filtra apenas os que começam com o termo de busca (case insensitive)
-                              const searchLower = tipoSearchTerm.toLowerCase();
-                              const siglaLower = tipo.sigla?.toLowerCase() || '';
-                              return siglaLower.startsWith(searchLower);
-                            })
-                            .slice(0, 1) // Mostra apenas 1 item
-                            .map((tipo) => {
-                            const handleSelect = () => {
-                              const now = Date.now();
-                              const lastTime = lastSelectTimeMap.current.get(tipo.id) || 0;
-                              
-                              // Previne múltiplas chamadas em menos de 200ms
-                              if (now - lastTime < 200) {
-                                return;
+                    >
+                      <CommandInput 
+                        ref={tipoSearchInputRef}
+                        placeholder="Buscar tipo..." 
+                        value={tipoSearchTerm}
+                        onValueChange={(value) => {
+                          setTipoSearchTerm(value);
+                        }}
+                        autoFocus={tipoPopupOpen}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            // Encontra o item destacado na lista (cmdk usa data-selected ou aria-selected)
+                            const selectedItem = document.querySelector('[cmdk-item][data-selected="true"], [cmdk-item][aria-selected="true"]') as HTMLElement;
+                            if (selectedItem) {
+                              // Dispara o evento de seleção
+                              selectedItem.click();
+                            } else {
+                              // Se não houver item destacado, seleciona o primeiro da lista
+                              const firstItem = document.querySelector('[cmdk-item]') as HTMLElement;
+                              if (firstItem) {
+                                firstItem.click();
                               }
-                              lastSelectTimeMap.current.set(tipo.id, now);
+                            }
+                            // Fecha o popover
+                            setTipoPopupOpen(false);
+                            // Avança para o próximo campo (input número)
+                            setTimeout(() => {
+                              const numeroInput = document.getElementById('num_licitacao') as HTMLElement;
+                              if (numeroInput) {
+                                numeroInput.focus();
+                              }
+                            }, 100);
+                          }
+                        }}
+                      />
+                      {tipoSearchTerm && (
+                        <CommandList>
+                          <CommandEmpty>Nenhum tipo encontrado.</CommandEmpty>
+                          <CommandGroup className="p-0">
+                            {tipos
+                              .filter((tipo) => {
+                                if (!tipoSearchTerm) return false;
+                                // Filtra apenas os que começam com o termo de busca (case insensitive)
+                                const searchLower = tipoSearchTerm.toLowerCase();
+                                const siglaLower = tipo.sigla?.toLowerCase() || '';
+                                return siglaLower.startsWith(searchLower);
+                              })
+                              .slice(0, 1) // Mostra apenas 1 item
+                              .map((tipo) => {
+                              const handleSelect = () => {
+                                const now = Date.now();
+                                const lastTime = lastSelectTimeMap.current.get(tipo.id) || 0;
+                                
+                                // Previne múltiplas chamadas em menos de 200ms
+                                if (now - lastTime < 200) {
+                                  return;
+                                }
+                                lastSelectTimeMap.current.set(tipo.id, now);
+                                
+                                setFormData({ 
+                                  ...formData, 
+                                  modalidade: tipo.id, // ID do tipo (para o dropdown)
+                                  descricao_modalidade: tipo.id // ID do tipo (UUID) - não a descrição!
+                                });
+                                setTipoPopupOpen(false);
+                                setTipoSearchTerm(''); // Limpa a busca ao selecionar
+                              };
                               
-                              setFormData({ 
-                                ...formData, 
-                                modalidade: tipo.id, // ID do tipo (para o dropdown)
-                                descricao_modalidade: tipo.id // ID do tipo (UUID) - não a descrição!
-                              });
-                              setTipoPopupOpen(false);
-                              setTipoSearchTerm(''); // Limpa a busca ao selecionar
-                            };
-                            
-                            return (
-                              <CommandItem
-                                key={tipo.id}
-                                value={`${tipo.sigla} ${tipo.descricao || ''}`}
-                                onSelect={handleSelect}
-                                onClick={(e) => {
-                                  // Fallback para garantir que funcione em todos os navegadores
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleSelect();
-                                }}
-                                onMouseDown={(e) => {
-                                  // Fallback adicional para mouse
-                                  if (e.button === 0) {
+                              return (
+                                <CommandItem
+                                  key={tipo.id}
+                                  value={`${tipo.sigla} ${tipo.descricao || ''}`}
+                                  onSelect={handleSelect}
+                                  onClick={(e) => {
+                                    // Fallback para garantir que funcione em todos os navegadores
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleSelect();
+                                  }}
+                                  onMouseDown={(e) => {
+                                    // Fallback adicional para mouse
+                                    if (e.button === 0) {
+                                      e.preventDefault();
+                                      handleSelect();
+                                    }
+                                  }}
+                                  onTouchStart={(e) => {
+                                    // Fallback para dispositivos touch
                                     e.preventDefault();
                                     handleSelect();
-                                  }
-                                }}
-                                onTouchStart={(e) => {
-                                  // Fallback para dispositivos touch
-                                  e.preventDefault();
-                                  handleSelect();
-                                }}
-                                className={cn(
-                                  "px-3 py-2 rounded-none cursor-pointer",
-                                  formData.modalidade === tipo.id
-                                    ? "!bg-[#02572E]/10 !text-[#02572E]"
-                                    : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
-                                )}
-                                style={{ 
-                                  pointerEvents: 'auto', 
-                                  userSelect: 'none',
-                                  WebkitUserSelect: 'none',
-                                  MozUserSelect: 'none',
-                                  msUserSelect: 'none',
-                                  touchAction: 'manipulation'
-                                }}
-                              >
-                                {tipo.sigla} - {tipo.descricao}
-                              </CommandItem>
-                            );
-                          })}
-                        </CommandGroup>
-                      </CommandList>
-                    )}
-                  </Command>
-                </PopoverContent>
-              </Popover>
+                                  }}
+                                  className={cn(
+                                    "px-3 py-2 rounded-none cursor-pointer",
+                                    formData.modalidade === tipo.id
+                                      ? "!bg-[#02572E]/10 !text-[#02572E]"
+                                      : "!bg-transparent !text-foreground hover:!bg-accent hover:!text-accent-foreground"
+                                  )}
+                                  style={{ 
+                                    pointerEvents: 'auto', 
+                                    userSelect: 'none',
+                                    WebkitUserSelect: 'none',
+                                    MozUserSelect: 'none',
+                                    msUserSelect: 'none',
+                                    touchAction: 'manipulation'
+                                  }}
+                                >
+                                  {tipo.sigla} - {tipo.descricao}
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      )}
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                  type="button"
+                  onClick={() => setBuscarTipoPopupOpen(true)}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="num_licitacao" className="text-sm font-normal text-[#262626]">Número</Label>
+            <div className="space-y-1 flex flex-col">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="num_licitacao" className="text-sm font-normal text-[#262626]">Número</Label>
+                <div className="flex items-center gap-1.5">
+                  <Checkbox
+                    id="revisao"
+                    checked={revisao}
+                    onCheckedChange={(checked) => setRevisao(checked === true)}
+                  />
+                  <Label htmlFor="revisao" className="text-xs font-normal cursor-pointer">Revisão</Label>
+                </div>
+              </div>
               <Input
                 id="num_licitacao"
                 tabIndex={3}
@@ -2320,7 +2852,7 @@ export default function LicitacaoCadastro() {
                 className="h-9 bg-white"
               />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 flex flex-col">
               <Label htmlFor="dt_publicacao" className="text-sm font-normal text-[#262626]">Data Licitação</Label>
               <div className="relative">
                 <Input
@@ -2566,7 +3098,7 @@ export default function LicitacaoCadastro() {
           </div>
 
           {/* Botões inferiores */}
-          <div className="flex gap-2 mt-4">
+          <div className="flex gap-2 mt-4 items-end">
             <Button 
               variant="outline" 
               className="bg-gray-100 hover:bg-gray-200 text-[#262626]"
@@ -2575,20 +3107,67 @@ export default function LicitacaoCadastro() {
               <Link2 className="w-4 h-4 mr-2" />
               Links (F2)
             </Button>
-            {formData.link_processo && formData.link_processo.trim() !== '' && (
-              <Button 
-                variant="outline" 
-                className="bg-gray-100 hover:bg-gray-200 text-[#262626]"
-                onClick={() => setExibirPopupOpen(true)}
-              >
-                Exibir Licitação
-              </Button>
-            )}
+            <Button 
+              variant="outline" 
+              className="bg-gray-100 hover:bg-gray-200 text-[#262626]"
+              onClick={() => setExibirPopupOpen(true)}
+            >
+              Exibir Licitação
+            </Button>
+            {/* Datepicker bloqueado para data de publicação */}
+            <div>
+              <div className="space-y-1">
+                <Label className="text-sm font-normal text-[#262626]">Data de Publicação</Label>
+                <div className="relative">
+                  <Input
+                    value={formData.dt_vinculo_ativa ? formatarDataISO(formData.dt_vinculo_ativa) : ''}
+                    readOnly
+                    placeholder="DD/MM/AAAA"
+                    className="h-9 pr-8 bg-gray-50 cursor-not-allowed w-[140px]"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-9 w-9 hover:bg-transparent cursor-not-allowed"
+                    disabled
+                  >
+                    <CalendarIcon className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
+        {/* Divisor redimensionável */}
+        <div
+          className={cn(
+            "flex-shrink-0 relative group z-10",
+            atividadesResizable.isResizing && "cursor-col-resize"
+          )}
+          style={{ userSelect: 'none' }}
+        >
+          {/* Área de arrasto invisível maior */}
+          <div
+            className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-8 cursor-col-resize"
+            onMouseDown={atividadesResizable.handleMouseDown}
+            title="Arraste para redimensionar"
+          />
+          {/* Barra visual */}
+          <div
+            className={cn(
+              "w-1 bg-gray-200 hover:bg-gray-300 transition-colors mx-auto h-full",
+              atividadesResizable.isResizing && "bg-gray-400"
+            )}
+          />
+        </div>
+
         {/* Sidebar Direita - Atividades */}
-        <div className="w-[350px] bg-white rounded-lg border border-border p-4 flex flex-col text-[14px]">
+        <div 
+          className="bg-white rounded-lg border border-border p-4 flex flex-col text-[14px] flex-shrink-0"
+          style={{ width: `${atividadesResizable.width}px` }}
+        >
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-[#262626]">Atividades - ({selectedRamos.length})</h2>
           </div>
@@ -2670,6 +3249,25 @@ export default function LicitacaoCadastro() {
         termoInicial={termoInicialOrgao}
       />
 
+      <BuscarTipoPopup
+        open={buscarTipoPopupOpen}
+        onOpenChange={(open) => {
+          setBuscarTipoPopupOpen(open);
+          if (!open) {
+            // Limpa o termo inicial quando o popup fecha
+            setTermoInicialTipo('');
+          }
+        }}
+        onTipoSelecionado={(tipo) => {
+          setFormData({ 
+            ...formData, 
+            modalidade: tipo.id,
+            descricao_modalidade: tipo.id
+          });
+        }}
+        termoInicial={termoInicialTipo}
+      />
+
       {/* Popup de Exibir Licitação */}
       <Dialog open={exibirPopupOpen} onOpenChange={setExibirPopupOpen}>
         <DialogContent className="sm:max-w-[90vw] max-w-[90vw] w-[90vw] h-[90vh] p-0 gap-0">
@@ -2679,13 +3277,19 @@ export default function LicitacaoCadastro() {
             </DialogTitle>
           </DialogHeader>
           <div className="flex-1 px-6 pb-6">
-            {formData.link_processo && (
+            {formData.link_processo && formData.link_processo.trim() !== '' ? (
               <iframe
                 src={formData.link_processo}
                 className="w-full h-[calc(90vh-120px)] border border-gray-200 rounded-lg"
                 title="Licitação"
                 allowFullScreen
               />
+            ) : (
+              <div className="flex items-center justify-center h-[calc(90vh-120px)] border border-gray-200 rounded-lg bg-gray-50">
+                <p className="text-muted-foreground text-sm">
+                  Nenhum link de processo cadastrado. Cadastre um link através do botão "Links (F2)".
+                </p>
+              </div>
             )}
           </div>
         </DialogContent>
@@ -2707,6 +3311,58 @@ export default function LicitacaoCadastro() {
               className="bg-red-500 hover:bg-red-600 text-white"
             >
               Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog de alerta de duplicidade */}
+      <AlertDialog open={duplicidadeDialogOpen} onOpenChange={setDuplicidadeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Licitação já cadastrada</AlertDialogTitle>
+            <AlertDialogDescription>
+              Uma licitação com os mesmos dados (Tipo, Número, Órgão e Conteúdo) já existe no sistema.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row gap-2 sm:gap-0">
+            <AlertDialogCancel 
+              onClick={() => setDuplicidadeDialogOpen(false)}
+              className="sm:mr-2"
+            >
+              Não
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => setDuplicidadeDialogOpen(false)}
+              className="bg-[#5046E5] hover:bg-[#4338CA]"
+            >
+              Sim
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog de confirmação quando não há atividades selecionadas */}
+      <AlertDialog open={atividadesVaziasDialogOpen} onOpenChange={setAtividadesVaziasDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Nenhuma atividade selecionada</AlertDialogTitle>
+            <AlertDialogDescription>
+              Você está com dúvida em qual atividade marcar?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row gap-2 sm:gap-0">
+            <AlertDialogCancel 
+              onClick={handleCancelarAtividadesVazias}
+              className="sm:mr-2"
+            >
+              Não
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirmarAtividadesVazias}
+              className="bg-[#5046E5] hover:bg-[#4338CA]"
+            >
+              Sim
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
