@@ -14,7 +14,8 @@ import {
   UserX,
   UsersRound,
   Building,
-  Globe
+  Globe,
+  ListTree
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -56,6 +57,7 @@ const menuItems: MenuItem[] = [
     icon: Building,
     children: [
       { label: 'Sites', path: '/empresa/sites', icon: Globe },
+      { label: 'Atividades', path: '/empresa/atividades', icon: ListTree },
     ],
   },
 ];
