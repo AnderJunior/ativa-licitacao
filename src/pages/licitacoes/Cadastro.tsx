@@ -22,6 +22,7 @@ import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPop
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
 import { cn } from '@/lib/utils';
+import { ORDEM_ARVORE_ATIVIDADES } from '@/lib/ordemArvoreAtividades';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useResizable } from '@/hooks/use-resizable';
@@ -60,6 +61,7 @@ interface RamoAtividade {
   nome: string;
   e_grupo: boolean;
   grupo_relacionado: string | null;
+  palavras_chaves?: string[] | null;
   children?: RamoAtividade[];
 }
 
@@ -110,11 +112,19 @@ export default function LicitacaoCadastro() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [duplicidadeDialogOpen, setDuplicidadeDialogOpen] = useState(false);
   const [atividadesVaziasDialogOpen, setAtividadesVaziasDialogOpen] = useState(false);
+  const [palavrasChavesModalOpen, setPalavrasChavesModalOpen] = useState(false);
+  const [palavrasChavesModalItem, setPalavrasChavesModalItem] = useState<RamoAtividade | null>(null);
+  const [palavrasChavesFloatingPos, setPalavrasChavesFloatingPos] = useState<{ top: number; left: number; placement: 'above' | 'below' } | null>(null);
+  const [palavrasChavesEditValue, setPalavrasChavesEditValue] = useState('');
+  const [palavrasChavesSaving, setPalavrasChavesSaving] = useState(false);
+  const FLOATING_PANEL_ESTIMATED_H = 220;
+  const FLOATING_PANEL_W = 320;
   
   // Estados para preenchimento automático
   const [autoPreencherUASG, setAutoPreencherUASG] = useState(false);
   const [autoPreencherDATA, setAutoPreencherDATA] = useState(false);
   const [autoPreencherTIPO, setAutoPreencherTIPO] = useState(false);
+  /** Revisão: marcado somente quando a licitação já está cadastrada E já foi enviada em relatório ao cliente. Não é marcado apenas por estar cadastrada. Ver docs/REVISAO-CHECKBOX.md */
   const [revisao, setRevisao] = useState(false);
   
   // Estados para pesquisa por digitação
@@ -480,6 +490,13 @@ export default function LicitacaoCadastro() {
       // Ignora teclas de navegação e função
       if (e.key.length > 1 && !['Backspace', 'Delete', 'Space'].includes(e.key)) return;
       
+      // Ao começar a digitar para pesquisar, fecha o modal de palavras-chave
+      if (palavrasChavesModalOpen && (e.key === 'Backspace' || e.key === 'Delete' || e.key === ' ' || /^[a-zA-Z0-9]$/.test(e.key))) {
+        setPalavrasChavesModalOpen(false);
+        setPalavrasChavesModalItem(null);
+        setPalavrasChavesFloatingPos(null);
+      }
+      
       // Se for Backspace ou Delete, limpa o buffer
       if (e.key === 'Backspace' || e.key === 'Delete') {
         setSearchBuffer(prev => {
@@ -620,7 +637,7 @@ export default function LicitacaoCadastro() {
         clearTimeout(highlightTimeoutRef.current);
       }
     };
-  }, [searchBuffer, ramos, highlightedAtividadeId]);
+  }, [searchBuffer, ramos, highlightedAtividadeId, palavrasChavesModalOpen]);
 
   // Remove outline do viewport quando recebe foco
   useEffect(() => {
@@ -662,6 +679,10 @@ export default function LicitacaoCadastro() {
     const { data } = await supabase.from('ramos_de_atividade').select('*').order('nome');
     if (data) {
       const tree = buildTree(data);
+      const orderMap = new Map(
+        ORDEM_ARVORE_ATIVIDADES.map((nome, i) => [nome.trim().toLowerCase(), i])
+      );
+      sortTreeByDocumentOrder(tree, orderMap);
       setRamos(tree);
     }
   };
@@ -690,6 +711,59 @@ export default function LicitacaoCadastro() {
     });
 
     return roots;
+  };
+
+  /** Ordena a árvore conforme docs/ordem-arvore-de-atividades-licitacao.md */
+  const sortTreeByDocumentOrder = (nodes: RamoAtividade[], orderMap: Map<string, number>): void => {
+    nodes.sort((a, b) => {
+      const keyA = a.nome.trim().toLowerCase();
+      const keyB = b.nome.trim().toLowerCase();
+      const idxA = orderMap.get(keyA) ?? 1e9;
+      const idxB = orderMap.get(keyB) ?? 1e9;
+      return idxA - idxB;
+    });
+    nodes.forEach(node => {
+      if (node.children && node.children.length > 0) {
+        sortTreeByDocumentOrder(node.children, orderMap);
+      }
+    });
+  };
+
+  /** Atualiza palavras_chaves de um nó na árvore por id (retorna nova árvore imutável) */
+  const updateRamoPalavrasChavesInTree = (nodes: RamoAtividade[], ramoId: string, novasPalavras: string[]): RamoAtividade[] => {
+    return nodes.map(node => {
+      if (node.id === ramoId) {
+        return { ...node, palavras_chaves: novasPalavras };
+      }
+      if (node.children?.length) {
+        return { ...node, children: updateRamoPalavrasChavesInTree(node.children, ramoId, novasPalavras) };
+      }
+      return node;
+    });
+  };
+
+  const handleSalvarPalavrasChaves = async () => {
+    if (!palavrasChavesModalItem) return;
+    const parsed = palavrasChavesEditValue
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    setPalavrasChavesSaving(true);
+    try {
+      const { error } = await supabase
+        .from('ramos_de_atividade')
+        .update({ palavras_chaves: parsed })
+        .eq('id', palavrasChavesModalItem.id);
+      if (error) throw error;
+      setRamos(prev => updateRamoPalavrasChavesInTree(prev, palavrasChavesModalItem.id, parsed));
+      setPalavrasChavesModalItem(prev => prev ? { ...prev, palavras_chaves: parsed } : null);
+      toast.success('Palavras-chave atualizadas.');
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Erro ao salvar palavras-chave.');
+    } finally {
+      setPalavrasChavesSaving(false);
+    }
   };
 
   // Formata o conteúdo da licitação no layout padrão
@@ -966,6 +1040,8 @@ export default function LicitacaoCadastro() {
         ano_compra: naoPreencherNumero ? null : anoCompra,
         num_licitacao: numLicitacaoFormatado,
       });
+      // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
+      setRevisao(data.cadastrado === true && data.enviada === true);
       // Load marcações
       const { data: marcacoes } = await supabase
         .from('contratacoes_marcacoes')
@@ -1136,6 +1212,8 @@ export default function LicitacaoCadastro() {
       ano_compra: anoCompra,
       num_licitacao: numLicitacaoFormatado,
     });
+    // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
+    setRevisao(licitacao.cadastrado === true && licitacao.enviada === true);
     
     // Marca os ramos de atividade
     setSelectedRamos(ramos);
@@ -1643,6 +1721,7 @@ export default function LicitacaoCadastro() {
     
     // Limpa checkboxes selecionados (ramos de atividade)
     setSelectedRamos([]);
+    setRevisao(false);
     
     // Fecha popovers se estiverem abertos
     setTipoPopupOpen(false);
@@ -2246,7 +2325,26 @@ export default function LicitacaoCadastro() {
               isSelected ? "bg-yellow-200" : isHighlighted ? "bg-blue-100" : ""
             )}
             data-atividade-id={item.id}
-            onClick={() => handleItemClick(item.id)}
+            onClick={(e) => {
+              handleItemClick(item.id);
+              const el = e.currentTarget as HTMLElement;
+              const rect = el.getBoundingClientRect();
+              const spaceBelow = window.innerHeight - rect.bottom;
+              const spaceAbove = rect.top;
+              const placement: 'above' | 'below' =
+                spaceBelow >= FLOATING_PANEL_ESTIMATED_H || spaceBelow >= spaceAbove ? 'below' : 'above';
+              const top =
+                placement === 'below'
+                  ? rect.bottom + 6
+                  : Math.max(8, rect.top - FLOATING_PANEL_ESTIMATED_H - 6);
+              let left = rect.left;
+              if (left + FLOATING_PANEL_W > window.innerWidth - 8) left = window.innerWidth - FLOATING_PANEL_W - 8;
+              if (left < 8) left = 8;
+              setPalavrasChavesFloatingPos({ top, left, placement });
+              setPalavrasChavesModalItem(item);
+              setPalavrasChavesEditValue(item.palavras_chaves?.length ? item.palavras_chaves.join(', ') : '');
+              setPalavrasChavesModalOpen(true);
+            }}
           >
             <Checkbox
               id={item.id}
@@ -2807,6 +2905,7 @@ export default function LicitacaoCadastro() {
               <div className="flex items-center justify-between">
                 <Label htmlFor="num_licitacao" className="text-sm font-normal text-[#262626]">Número</Label>
                 <div className="flex items-center gap-1.5">
+                  {/* Revisão = licitação cadastrada E já enviada em relatório ao cliente (não apenas cadastrada). Ver docs/REVISAO-CHECKBOX.md */}
                   <Checkbox
                     id="revisao"
                     checked={revisao}
@@ -3341,6 +3440,50 @@ export default function LicitacaoCadastro() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Floating panel de palavras-chave (abaixo ou acima do item clicado) */}
+      {palavrasChavesModalOpen && palavrasChavesFloatingPos && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            aria-hidden
+            onClick={() => {
+              setPalavrasChavesModalOpen(false);
+              setPalavrasChavesModalItem(null);
+              setPalavrasChavesFloatingPos(null);
+              setPalavrasChavesEditValue('');
+            }}
+          />
+          <div
+            className="fixed z-50 rounded-lg border border-border bg-white shadow-lg overflow-hidden flex flex-col"
+            style={{
+              top: palavrasChavesFloatingPos.top,
+              left: palavrasChavesFloatingPos.left,
+              width: FLOATING_PANEL_W,
+              maxHeight: 300,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Textarea
+              className="min-h-[120px] max-h-[220px] resize-none border-0 text-[13px] lowercase focus-visible:ring-0 focus-visible:ring-offset-0 rounded-t-lg p-3"
+              placeholder="Digite palavras separadas por vírgula..."
+              value={palavrasChavesEditValue}
+              onChange={(e) => setPalavrasChavesEditValue(e.target.value)}
+            />
+            <div className="border-t border-border px-2 py-2 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                disabled={palavrasChavesSaving}
+                onClick={handleSalvarPalavrasChaves}
+                className="text-xs h-8"
+              >
+                {palavrasChavesSaving ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Dialog de confirmação quando não há atividades selecionadas */}
       <AlertDialog open={atividadesVaziasDialogOpen} onOpenChange={setAtividadesVaziasDialogOpen}>
