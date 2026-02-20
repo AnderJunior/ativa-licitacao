@@ -444,8 +444,8 @@ export default function Atividades() {
                   isSelected ? "bg-yellow-200" : isHighlighted ? "bg-blue-100" : ""
                 )}
                 data-atividade-id={item.id}
-                onClick={(e) => {
-                  handleItemClick(item.id);
+                onClick={() => handleItemClick(item.id)}
+                onDoubleClick={(e) => {
                   const el = e.currentTarget as HTMLElement;
                   const rect = el.getBoundingClientRect();
                   const spaceBelow = window.innerHeight - rect.bottom;

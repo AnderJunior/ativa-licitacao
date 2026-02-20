@@ -120,10 +120,25 @@ export default function LicitacaoCadastro() {
   const FLOATING_PANEL_ESTIMATED_H = 220;
   const FLOATING_PANEL_W = 320;
   
-  // Estados para preenchimento automático
-  const [autoPreencherUASG, setAutoPreencherUASG] = useState(false);
-  const [autoPreencherDATA, setAutoPreencherDATA] = useState(false);
-  const [autoPreencherTIPO, setAutoPreencherTIPO] = useState(false);
+  // Estados para preenchimento automático (persistem em localStorage para não desmarcar ao salvar, novo ou limpar)
+  const STORAGE_AUTO_UASG = 'licitacao-cadastro-auto-uasg';
+  const STORAGE_AUTO_DATA = 'licitacao-cadastro-auto-data';
+  const STORAGE_AUTO_TIPO = 'licitacao-cadastro-auto-tipo';
+  const [autoPreencherUASG, setAutoPreencherUASG] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_AUTO_UASG) === 'true';
+    } catch { return false; }
+  });
+  const [autoPreencherDATA, setAutoPreencherDATA] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_AUTO_DATA) === 'true';
+    } catch { return false; }
+  });
+  const [autoPreencherTIPO, setAutoPreencherTIPO] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_AUTO_TIPO) === 'true';
+    } catch { return false; }
+  });
   /** Revisão: marcado somente quando a licitação já está cadastrada E já foi enviada em relatório ao cliente. Não é marcado apenas por estar cadastrada. Ver docs/REVISAO-CHECKBOX.md */
   const [revisao, setRevisao] = useState(false);
   
@@ -382,6 +397,73 @@ export default function LicitacaoCadastro() {
       }
     }
   }, [orgaos.length, formData.id, formData.orgao_pncp, autoPreencherUASG, contratacaoId, searchParams]);
+
+  // Persiste os checks UASG, DATA e TIPO no localStorage para não desmarcar ao salvar, novo ou limpar
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_AUTO_UASG, String(autoPreencherUASG));
+      localStorage.setItem(STORAGE_AUTO_DATA, String(autoPreencherDATA));
+      localStorage.setItem(STORAGE_AUTO_TIPO, String(autoPreencherTIPO));
+    } catch { /* ignore */ }
+  }, [autoPreencherUASG, autoPreencherDATA, autoPreencherTIPO]);
+
+  // Verificação automática de duplicidade quando Órgão, Tipo e Número estiverem preenchidos
+  useEffect(() => {
+    const tipoValido = formData.modalidade && tipos.find(t => t.id === formData.modalidade);
+    const orgaoValido = formData.orgao_pncp && orgaos.find(o => o.nome_orgao === formData.orgao_pncp || o.id === formData.orgao_pncp);
+    const numeroPreenchido = formData.sequencial_compra != null && formData.sequencial_compra !== '' && formData.ano_compra != null && formData.ano_compra !== '';
+
+    if (!tipoValido || !orgaoValido || !numeroPreenchido) return;
+    if (tipos.length === 0 || orgaos.length === 0) return;
+
+    const tipoId = tipoValido.id;
+    const sequencialCompra = Number(formData.sequencial_compra);
+    const anoCompra = Number(formData.ano_compra);
+    if (isNaN(sequencialCompra) || isNaN(anoCompra)) return;
+
+    let orgaoParaVerificar = formData.orgao_pncp!;
+    const orgao = orgaos.find(o => o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp);
+    if (orgao) orgaoParaVerificar = orgao.nome_orgao;
+
+    const normalizarString = (str: string | null | undefined): string => {
+      if (!str) return '';
+      return String(str)
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const timerId = setTimeout(async () => {
+      const licitacaoIdAtual = formData.id || contratacaoId || null;
+      const { data: licitacoesCandidatas, error } = await supabase
+        .from('contratacoes')
+        .select('id, orgao_pncp')
+        .eq('descricao_modalidade', tipoId)
+        .eq('sequencial_compra', sequencialCompra)
+        .eq('ano_compra', anoCompra);
+
+      if (error) {
+        console.error('Erro ao verificar duplicidade:', error);
+        return;
+      }
+
+      if (!licitacoesCandidatas?.length) return;
+
+      const orgaoNovoNormalizado = normalizarString(orgaoParaVerificar);
+      const licitacaoDuplicada = licitacoesCandidatas.find((lic: { id: string; orgao_pncp: string | null }) => {
+        const orgaoExistenteNormalizado = normalizarString(lic.orgao_pncp);
+        return orgaoExistenteNormalizado === orgaoNovoNormalizado;
+      });
+
+      if (licitacaoDuplicada && (!licitacaoIdAtual || licitacaoDuplicada.id !== licitacaoIdAtual)) {
+        setDuplicidadeDialogOpen(true);
+      }
+    }, 400);
+
+    return () => clearTimeout(timerId);
+  }, [formData.modalidade, formData.orgao_pncp, formData.sequencial_compra, formData.ano_compra, formData.id, tipos, orgaos, contratacaoId]);
 
   // Detecta quando o texto do textarea corresponde apenas a um nome de órgão e abre o popup automaticamente
   useEffect(() => {
@@ -1271,99 +1353,7 @@ export default function LicitacaoCadastro() {
         orgaoParaSalvar = orgaoValido.nome_orgao;
       }
 
-      // Verificação de duplicidade: Tipo, Número (sequencial_compra + ano_compra), Órgão e Conteúdo
       const licitacaoId = formData.id || contratacaoId;
-      const conteudoParaVerificar = (formData.conteudo || '').trim();
-      
-      // Função para normalizar strings (remove acentos, converte para minúsculas, remove espaços extras)
-      const normalizarString = (str: string | null | undefined): string => {
-        if (!str) return '';
-        return String(str)
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '') // Remove acentos
-          .replace(/\r\n/g, ' ') // Substitui quebras de linha Windows por espaço
-          .replace(/\n/g, ' ') // Substitui quebras de linha Unix por espaço
-          .replace(/\r/g, ' ') // Substitui carriage return por espaço
-          .replace(/\s+/g, ' ') // Substitui múltiplos espaços por um único espaço
-          .trim();
-      };
-
-      // Normaliza o conteúdo para comparação
-      const conteudoNormalizado = normalizarString(conteudoParaVerificar);
-      
-      // Busca licitações com os mesmos dados básicos (Tipo, Número, Órgão)
-      // Garante que os valores numéricos sejam do tipo correto
-      const sequencialCompra = Number(formData.sequencial_compra);
-      const anoCompra = Number(formData.ano_compra);
-      
-      let query = supabase
-        .from('contratacoes')
-        .select('id, descricao_modalidade, sequencial_compra, ano_compra, orgao_pncp, conteudo, textos_cadastro_manual')
-        .eq('descricao_modalidade', tipoIdParaSalvar)
-        .eq('sequencial_compra', sequencialCompra)
-        .eq('ano_compra', anoCompra);
-
-      const { data: licitacoesCandidatas, error: errorVerificacao } = await query;
-
-      if (errorVerificacao) {
-        console.error('Erro ao verificar duplicidade:', errorVerificacao);
-        toast.error('Erro ao verificar duplicidade. Tente novamente.');
-        setSaving(false);
-        return;
-      }
-
-      // Log para debug
-      console.log('Verificação de duplicidade:', {
-        tipoId: tipoIdParaSalvar,
-        sequencial: sequencialCompra,
-        ano: anoCompra,
-        orgao: orgaoParaSalvar,
-        conteudoLength: conteudoParaVerificar.length,
-        candidatasEncontradas: licitacoesCandidatas?.length || 0,
-        licitacaoIdAtual: licitacaoId
-      });
-
-      // Filtra pelas que têm o mesmo órgão (comparação normalizada) e mesmo conteúdo
-      if (licitacoesCandidatas && licitacoesCandidatas.length > 0) {
-        const licitacaoDuplicada = licitacoesCandidatas.find((lic: any) => {
-          // Normaliza o órgão para comparação
-          const orgaoExistenteNormalizado = normalizarString(lic.orgao_pncp || '');
-          const orgaoNovoNormalizado = normalizarString(orgaoParaSalvar);
-          
-          // Se os órgãos não coincidem, não é duplicata
-          if (orgaoExistenteNormalizado !== orgaoNovoNormalizado) {
-            return false;
-          }
-
-          // Compara o conteúdo (pode estar em conteudo ou textos_cadastro_manual)
-          const conteudoExistente = (lic.conteudo || lic.textos_cadastro_manual || '').trim();
-          
-          // Normaliza o conteúdo existente para comparação
-          const conteudoExistenteNormalizado = normalizarString(conteudoExistente);
-          
-          // Compara os conteúdos normalizados (mesmo se ambos forem vazios, serão iguais)
-          return conteudoExistenteNormalizado === conteudoNormalizado;
-        });
-
-        // Se encontrou duplicata e não é a mesma licitação (não é UPDATE)
-        // Se licitacaoId for null/undefined, é um novo cadastro, então qualquer duplicata deve bloquear
-        if (licitacaoDuplicada && (!licitacaoId || licitacaoDuplicada.id !== licitacaoId)) {
-          console.log('Duplicata encontrada:', {
-            idExistente: licitacaoDuplicada.id,
-            idAtual: licitacaoId,
-            tipo: tipoIdParaSalvar,
-            sequencial: sequencialCompra,
-            ano: anoCompra,
-            orgao: orgaoParaSalvar,
-            conteudoExistenteLength: (licitacaoDuplicada.conteudo || licitacaoDuplicada.textos_cadastro_manual || '').length,
-            conteudoNovoLength: conteudoParaVerificar.length
-          });
-          setSaving(false);
-          setDuplicidadeDialogOpen(true);
-          return;
-        }
-      }
 
       // Remove campos que não devem ser salvos na tabela
       // cadastrado_por é apenas para exibição, não deve ser salvo
@@ -1620,11 +1610,11 @@ export default function LicitacaoCadastro() {
     setAtividadesVaziasDialogOpen(false);
   };
 
-  // Atalho Ctrl+S para salvar licitação
+  // Atalho Ctrl+Shift+S para salvar licitação
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Verifica se é Ctrl+S (ou Cmd+S no Mac)
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      // Verifica se é Ctrl+Shift+S (ou Cmd+Shift+S no Mac)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 's') {
         // Sempre previne o comportamento padrão (salvar página do navegador)
         e.preventDefault();
         e.stopPropagation();
@@ -2325,8 +2315,8 @@ export default function LicitacaoCadastro() {
               isSelected ? "bg-yellow-200" : isHighlighted ? "bg-blue-100" : ""
             )}
             data-atividade-id={item.id}
-            onClick={(e) => {
-              handleItemClick(item.id);
+            onClick={() => handleItemClick(item.id)}
+            onDoubleClick={(e) => {
               const el = e.currentTarget as HTMLElement;
               const rect = el.getBoundingClientRect();
               const spaceBelow = window.innerHeight - rect.bottom;
