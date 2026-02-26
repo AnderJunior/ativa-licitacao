@@ -73,6 +73,7 @@ export function CadastrarOrgaoPopup({
   });
 
   const [newEmail, setNewEmail] = useState('');
+  const [newCustomLink, setNewCustomLink] = useState('');
   
   // Estados para dropdown de sites
   const [sites, setSites] = useState<Site[]>([]);
@@ -108,6 +109,7 @@ export function CadastrarOrgaoPopup({
       setSelectedGrupo('');
       setCidadeDisplay('');
       setNewEmail('');
+      setNewCustomLink('');
       setSiteSearchTerm('');
       setPosition({ x: 0, y: 0 });
     }
@@ -244,6 +246,20 @@ export function CadastrarOrgaoPopup({
         });
       }
 
+      // Persistir links personalizados na tabela sites (para URLs que ainda não existem)
+      const urlsToSave = formData.sites || [];
+      const existingSiteUrls = new Set(sites.map((s) => s.site));
+      for (const url of urlsToSave) {
+        if (existingSiteUrls.has(url)) continue;
+        try {
+          const hostname = new URL(url).hostname || 'Link personalizado';
+          await supabase.from('sites').insert({ dominio: hostname, site: url });
+          existingSiteUrls.add(url);
+        } catch {
+          // URL inválida, ignora
+        }
+      }
+
       toast.success('Órgão salvo com sucesso!');
       onOrgaoCadastrado?.();
       onOpenChange(false);
@@ -301,6 +317,27 @@ export function CadastrarOrgaoPopup({
     });
     setSitePopupOpen(false);
     setSiteSearchTerm('');
+  };
+
+  const addCustomLink = () => {
+    const raw = newCustomLink.trim();
+    if (!raw) return;
+    const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      new URL(url);
+    } catch {
+      toast.error('Por favor, insira uma URL válida (ex: https://...)');
+      return;
+    }
+    if (formData.sites?.includes(url)) {
+      toast.error('Este link já foi adicionado');
+      return;
+    }
+    setFormData({
+      ...formData,
+      sites: [...(formData.sites || []), url],
+    });
+    setNewCustomLink('');
   };
 
   const removeSite = (index: number) => {
@@ -492,7 +529,7 @@ export function CadastrarOrgaoPopup({
               {/* Linha 4: Sites */}
               <div className="mb-3">
                 <Label className="text-[14px] font-normal text-[#262626]">Sites</Label>
-                <div className="mt-1">
+                <div className="flex gap-2 mt-1 mb-3">
                   <Popover 
                     open={sitePopupOpen} 
                     onOpenChange={(open) => {
@@ -507,7 +544,7 @@ export function CadastrarOrgaoPopup({
                         variant="outline"
                         role="combobox"
                         aria-expanded={sitePopupOpen}
-                        className="h-9 w-full justify-between font-normal bg-white"
+                        className="h-9 flex-1 justify-between font-normal bg-white min-w-0"
                       >
                         Selecione um site
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -593,6 +630,24 @@ export function CadastrarOrgaoPopup({
                       </Command>
                     </PopoverContent>
                   </Popover>
+                  <Input
+                    type="url"
+                    placeholder="Link personalizado (https://...)"
+                    value={newCustomLink}
+                    onChange={(e) => setNewCustomLink(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomLink())}
+                    className="h-9 flex-1 bg-white min-w-0"
+                  />
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="icon"
+                    onClick={addCustomLink}
+                    className="h-9 w-9 shrink-0"
+                    title="Adicionar link personalizado"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
 

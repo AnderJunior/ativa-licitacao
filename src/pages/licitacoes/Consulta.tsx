@@ -327,7 +327,7 @@ export default function LicitacaoConsulta() {
                         {(c as any).tipo_licitacao?.sigla || c.tipo_cadastro || '-'}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">
-                        {c.num_licitacao || '-'}
+                        {(c as any).sequencial_compra && (c as any).ano_compra ? `${(c as any).sequencial_compra}/${(c as any).ano_compra}` : (c.num_licitacao || '-')}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">
                         {c.orgao_pncp || '-'}
@@ -379,7 +379,7 @@ export default function LicitacaoConsulta() {
                       </td>
                       <td className="p-4 align-middle">{c.uf || '-'}</td>
                       <td className="p-4 align-middle max-w-xs truncate">{c.orgao_pncp || '-'}</td>
-                      <td className="p-4 align-middle">{c.num_licitacao || '-'}</td>
+                      <td className="p-4 align-middle">{(c as any).sequencial_compra && (c as any).ano_compra ? `${(c as any).sequencial_compra}/${(c as any).ano_compra}` : (c.num_licitacao || '-')}</td>
                       <td className="p-4 align-middle">{formatDate(c.dt_encerramento_proposta)}</td>
                       <td className="p-4 align-middle">{formatCurrency(c.valor_estimado)}</td>
                       <td className="p-4 align-middle">

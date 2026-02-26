@@ -65,7 +65,7 @@ export default function MarcacoesPendentes() {
       // Buscar contratações cadastrado=true que NÃO têm marcações e não foram enviadas
       const { data: todasCadastradas, error: errCadastradas } = await supabase
         .from('contratacoes')
-        .select('id, num_ativa, uf, descricao_modalidade, titulo, num_licitacao, orgao_pncp, dt_publicacao, dt_vinculo_ativa, cadastrado_por, dt_alterado_ativa, created_at')
+        .select('id, num_ativa, uf, descricao_modalidade, titulo, num_licitacao, sequencial_compra, ano_compra, orgao_pncp, dt_publicacao, dt_vinculo_ativa, cadastrado_por, dt_alterado_ativa, created_at')
         .eq('cadastrado', true)
         .eq('enviada', false)
         .order('dt_publicacao', { ascending: false });
@@ -187,7 +187,7 @@ export default function MarcacoesPendentes() {
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{c.uf || '-'}</td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{formatarTipo(c.tipo_licitacao)}</td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">
-                        {c.num_licitacao || '-'}
+                        {(c as any).sequencial_compra && (c as any).ano_compra ? `${(c as any).sequencial_compra}/${(c as any).ano_compra}` : (c.num_licitacao || '-')}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">{c.orgao_pncp || '-'}</td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{formatDate(c.dt_publicacao || c.dt_vinculo_ativa)}</td>

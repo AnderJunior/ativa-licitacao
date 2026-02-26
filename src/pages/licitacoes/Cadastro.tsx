@@ -48,8 +48,8 @@ interface Contratacao {
   enviada: boolean;
   num_ativa?: string | null;
   pncp?: string | null;
-  sequencial_compra?: number | null;
-  ano_compra?: number | null;
+  sequencial_compra?: string | null;
+  ano_compra?: string | null;
   cadastrado_por?: string | null;
   dt_vinculo_ativa?: string | null;
   dt_alterado_ativa?: string | null;
@@ -89,6 +89,7 @@ export default function LicitacaoCadastro() {
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(false);
+  const [ordemAtual, setOrdemAtual] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [tipos, setTipos] = useState<TipoLicitacao[]>([]);
   const [orgaos, setOrgaos] = useState<Orgao[]>([]);
@@ -111,6 +112,22 @@ export default function LicitacaoCadastro() {
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [duplicidadeDialogOpen, setDuplicidadeDialogOpen] = useState(false);
+  const [licitacaoDuplicadaInfo, setLicitacaoDuplicadaInfo] = useState<{
+    num_ativa: string | null;
+    created_at: string | null;
+    titulo: string | null;
+    municipio: string | null;
+    uf: string | null;
+    orgao_pncp: string | null;
+    unidade: string | null;
+    un_cod: string | null;
+    modalidade: string | null;
+    num_licitacao: string | null;
+    conteudo: string | null;
+    valor_estimado: number | null;
+    dt_encerramento_proposta: string | null;
+    dt_atualizacao: string | null;
+  } | null>(null);
   const [atividadesVaziasDialogOpen, setAtividadesVaziasDialogOpen] = useState(false);
   const [palavrasChavesModalOpen, setPalavrasChavesModalOpen] = useState(false);
   const [palavrasChavesModalItem, setPalavrasChavesModalItem] = useState<RamoAtividade | null>(null);
@@ -188,7 +205,7 @@ export default function LicitacaoCadastro() {
     tipo_cadastro: 'manual',
     link_processo: null,
     links: [],
-    sequencial_compra: null,
+    sequencial_compra: '',
     ano_compra: null,
   });
 
@@ -439,7 +456,7 @@ export default function LicitacaoCadastro() {
       const licitacaoIdAtual = formData.id || contratacaoId || null;
       const { data: licitacoesCandidatas, error } = await supabase
         .from('contratacoes')
-        .select('id, orgao_pncp')
+        .select('id, orgao_pncp, num_ativa, created_at, titulo, municipio, uf, unidade, un_cod, modalidade, num_licitacao, conteudo, valor_estimado, dt_encerramento_proposta, dt_atualizacao')
         .eq('descricao_modalidade', tipoId)
         .eq('sequencial_compra', sequencialCompra)
         .eq('ano_compra', anoCompra);
@@ -458,6 +475,7 @@ export default function LicitacaoCadastro() {
       });
 
       if (licitacaoDuplicada && (!licitacaoIdAtual || licitacaoDuplicada.id !== licitacaoIdAtual)) {
+        setLicitacaoDuplicadaInfo(licitacaoDuplicada as any);
         setDuplicidadeDialogOpen(true);
       }
     }, 400);
@@ -908,7 +926,6 @@ export default function LicitacaoCadastro() {
       `Objeto: ${licitacao.conteudo || licitacao.titulo || 'Não informado'}`,
       `Complemento: ${licitacao.complemento || 'Nenhum'}`,
       `Período para recebimento de propostas:`,
-      `Início: ${formatarDataHora(licitacao.dt_publicacao)}`,
       `Fim: ${formatarDataHora(licitacao.dt_encerramento_proposta)}`,
       `Última atualização: ${formatarDataHora(licitacao.updated_at)}`,
       `Valor Estimado: ${formatarValor(licitacao.valor_estimado)}`,
@@ -973,9 +990,9 @@ export default function LicitacaoCadastro() {
           : formatarConteudoLicitacao(data);
       }
 
-      // Extrai sequencial_compra e ano_compra de num_licitacao se não existirem
-      let sequencialCompra = data.sequencial_compra ?? null;
-      let anoCompra = data.ano_compra ?? null;
+      // Converte sequencial_compra e ano_compra para string preservando zeros
+      let sequencialCompra = data.sequencial_compra != null ? String(data.sequencial_compra) : null;
+      let anoCompra = data.ano_compra != null ? String(data.ano_compra) : null;
       
       if ((!sequencialCompra || !anoCompra) && data.num_licitacao) {
         const parsed = parsearNumeroLicitacao(data.num_licitacao);
@@ -1024,33 +1041,8 @@ export default function LicitacaoCadastro() {
         ? `${data.num_ativa}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`
         : '';
 
-      // Formata num_licitacao baseado no tipo_cadastro:
-      // - Se tipo_cadastro = 'pncp': SEMPRE usa sequencial_compra/ano_compra
-      // - Se tipo_cadastro = 'Manual': usa num_licitacao do banco
-      // - Se naoPreencherNumero = true: não preenche o número (deixa vazio)
-      let numLicitacaoFormatado = '';
-      if (!naoPreencherNumero) {
-        if (data.tipo_cadastro === 'pncp') {
-          // PNCP: SEMPRE usa sequencial_compra/ano_compra
-          if (sequencialCompra !== null && anoCompra !== null) {
-            numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
-          }
-        } else if (data.tipo_cadastro === 'Manual') {
-          // Manual: usa num_licitacao do banco
-          numLicitacaoFormatado = data.num_licitacao || '';
-        } else {
-          // Fallback: se não tiver tipo_cadastro definido, tenta usar sequencial_compra/ano_compra
-          if (sequencialCompra !== null && anoCompra !== null) {
-            numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
-          } else if (data.num_licitacao && data.num_licitacao.trim() !== '') {
-            numLicitacaoFormatado = data.num_licitacao;
-          }
-        }
-      }
-
-      // Mantém a UF selecionada: sempre usa a UF da licitação se existir
-      // Se não tiver UF na licitação, mantém a UF anteriormente selecionada no formulário
-      const ufParaManter = data.uf || formData.pncp || '';
+      // UF do PNCP: não é alterado ao carregar licitação — só muda quando o usuário altera manualmente ou clica nos botões de apagar
+      const pncpPreservado = formData.pncp ?? '';
 
       // Verifica se é uma busca do PNCP (tem naoPreencherNumero) ou se vem da consulta
       // Se vem da consulta (sem naoPreencherNumero), sempre preenche automaticamente
@@ -1109,7 +1101,7 @@ export default function LicitacaoCadastro() {
         ...data,
         num_ativa: numAtivaFormatado,
         cadastrado_por: nomeUsuario,
-        pncp: ufParaManter, // Mantém a UF selecionada
+        pncp: pncpPreservado, // Não altera UF ao carregar — só manual ou botões de apagar
         modalidade: tipoParaPreencher,
         descricao_modalidade: descricaoModalidadeParaPreencher,
         orgao_pncp: orgaoParaPreencher, // Preenche automaticamente se vier da consulta, ou respeita checkbox se for busca PNCP
@@ -1118,10 +1110,10 @@ export default function LicitacaoCadastro() {
         link_processo: data.link_processo || null,
         links: data.links || [],
         conteudo: conteudoFormatado,
-        sequencial_compra: naoPreencherNumero ? null : sequencialCompra,
-        ano_compra: naoPreencherNumero ? null : anoCompra,
-        num_licitacao: numLicitacaoFormatado,
+        sequencial_compra: naoPreencherNumero ? '' : (sequencialCompra || ''),
+        ano_compra: naoPreencherNumero ? '' : (anoCompra || ''),
       });
+      setOrdemAtual(data.ordem ?? null);
       // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
       setRevisao(data.cadastrado === true && data.enviada === true);
       // Load marcações
@@ -1204,9 +1196,9 @@ export default function LicitacaoCadastro() {
       conteudoFormatado = formatarConteudoLicitacao(licitacao);
     }
 
-    // Extrai sequencial_compra e ano_compra de num_licitacao se não existirem
-    let sequencialCompra = licitacao.sequencial_compra ?? null;
-    let anoCompra = licitacao.ano_compra ?? null;
+    // Converte sequencial_compra e ano_compra para string preservando zeros
+    let sequencialCompra = licitacao.sequencial_compra != null ? String(licitacao.sequencial_compra) : null;
+    let anoCompra = licitacao.ano_compra != null ? String(licitacao.ano_compra) : null;
     
     if ((!sequencialCompra || !anoCompra) && licitacao.num_licitacao) {
       const parsed = parsearNumeroLicitacao(licitacao.num_licitacao);
@@ -1254,33 +1246,12 @@ export default function LicitacaoCadastro() {
       ? `${licitacao.num_ativa}.${String(new Date(licitacao.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(licitacao.created_at).getFullYear()).slice(-2)}`
       : '';
 
-    // Formata num_licitacao baseado no tipo_cadastro:
-    // - Se tipo_cadastro = 'pncp': SEMPRE usa sequencial_compra/ano_compra
-    // - Se tipo_cadastro = 'Manual': usa num_licitacao do banco
-    let numLicitacaoFormatado = '';
-    if (licitacao.tipo_cadastro === 'pncp') {
-      // PNCP: SEMPRE usa sequencial_compra/ano_compra
-      if (sequencialCompra !== null && anoCompra !== null) {
-        numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
-      }
-    } else if (licitacao.tipo_cadastro === 'Manual') {
-      // Manual: usa num_licitacao do banco
-      numLicitacaoFormatado = licitacao.num_licitacao || '';
-    } else {
-      // Fallback: se não tiver tipo_cadastro definido, tenta usar sequencial_compra/ano_compra
-      if (sequencialCompra !== null && anoCompra !== null) {
-        numLicitacaoFormatado = `${sequencialCompra}/${anoCompra}`;
-      } else if (licitacao.num_licitacao && licitacao.num_licitacao.trim() !== '') {
-        numLicitacaoFormatado = licitacao.num_licitacao;
-      }
-    }
-
-    // Preenche o formulário com os dados da licitação encontrada
-    setFormData({
+    // Preenche o formulário com os dados da licitação encontrada (UF e checkboxes PNCP não são alterados — só manual ou botões de apagar)
+    setFormData(prev => ({
       ...licitacao,
       num_ativa: numAtivaFormatado,
       cadastrado_por: nomeUsuario,
-      pncp: licitacao.cd_pn || '',
+      pncp: prev.pncp ?? '',
       modalidade: tipoId || '',
       orgao_pncp: orgaoValido,
       dt_publicacao: licitacao.dt_encerramento_proposta 
@@ -1290,10 +1261,10 @@ export default function LicitacaoCadastro() {
       link_processo: licitacao.link_processo || null,
       links: licitacao.links || [],
       conteudo: conteudoFormatado,
-      sequencial_compra: sequencialCompra,
-      ano_compra: anoCompra,
-      num_licitacao: numLicitacaoFormatado,
-    });
+      sequencial_compra: sequencialCompra || '',
+      ano_compra: anoCompra || '',
+    }));
+    setOrdemAtual(licitacao.ordem ?? null);
     // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
     setRevisao(licitacao.cadastrado === true && licitacao.enviada === true);
     
@@ -1363,7 +1334,7 @@ export default function LicitacaoCadastro() {
       // num_ativa é apenas para exibição (formato formatado), não deve ser salvo diretamente
       // O num_ativa será calculado e salvo apenas para cadastros manuais novos através de numAtivaParaSalvar
       const formDataAny = formData as any;
-      const { cadastrado_por, pncp, id, modalidade, modalidade_ativa, num_ativa, ...formDataToSave } = formDataAny;
+      const { cadastrado_por, pncp, id, modalidade, modalidade_ativa, num_ativa, ordem, ...formDataToSave } = formDataAny;
 
       // Determina o tipo de cadastro e se é manual:
       // - PNCP: Licitação vem da automação externa (já existe no banco com tipo_cadastro = 'PNCP')
@@ -1471,15 +1442,8 @@ export default function LicitacaoCadastro() {
         dataToSave.num_ativa = numAtivaParaSalvar;
       }
 
-      // Garante que num_licitacao seja salvo com o valor formatado completo (preservando zeros à esquerda)
-      // Usa o valor digitado pelo usuário no campo (formData.num_licitacao) que já preserva os zeros
-      if (formData.num_licitacao && formData.num_licitacao.trim() !== '') {
-        dataToSave.num_licitacao = formData.num_licitacao.trim();
-      } else if (formData.sequencial_compra !== null && formData.ano_compra !== null) {
-        // Fallback: se não tiver num_licitacao formatado, monta a partir dos números
-        // Mas preserva os zeros à esquerda usando o valor original do campo se disponível
-        dataToSave.num_licitacao = `${formData.sequencial_compra}/${formData.ano_compra}`;
-      }
+      // Nunca mexer em num_licitacao - remove do objeto de save se existir
+      delete dataToSave.num_licitacao;
 
       // Converte dt_publicacao do formulário para dt_encerramento_proposta no banco
       // Sempre salva em dt_encerramento_proposta em horário de Brasília (21:00)
@@ -1542,10 +1506,11 @@ export default function LicitacaoCadastro() {
         const { data, error } = await supabase
           .from('contratacoes')
           .insert(dataToSave)
-          .select('id, created_at, num_ativa')
+          .select('id, created_at, num_ativa, ordem')
           .single();
         if (error) throw error;
         contratacaoIdToUse = data.id;
+        setOrdemAtual(data.ordem ?? null);
         
         // Atualiza o num_ativa formatado no formData se foi calculado
         if (data.num_ativa && isCadastroManual) {
@@ -1573,6 +1538,24 @@ export default function LicitacaoCadastro() {
             ramo_id,
           }));
           await supabase.from('contratacoes_marcacoes').insert(marcacoes);
+        }
+      }
+
+      // Persistir links personalizados na tabela sites (para URLs que ainda não existem)
+      const linksToSave = formData.links || [];
+      if (linksToSave.length > 0) {
+        const sb = supabase as any;
+        const { data: existingSites } = await sb.from('sites').select('site').in('site', linksToSave);
+        const existingUrls = new Set((existingSites || []).map((r: { site: string }) => r.site));
+        for (const url of linksToSave) {
+          if (existingUrls.has(url)) continue;
+          try {
+            const hostname = new URL(url).hostname || 'Link personalizado';
+            await sb.from('sites').insert({ dominio: hostname, site: url });
+            existingUrls.add(url);
+          } catch {
+            // URL inválida ou erro, ignora
+          }
         }
       }
 
@@ -1687,15 +1670,11 @@ export default function LicitacaoCadastro() {
   };
 
   const handleLimpar = () => {
-    // Preserva o valor de PNCP se for uma UF válida
-    const pncpAtual = formData.pncp;
-    const pncpPreservado = pncpAtual && UFS.includes(pncpAtual) ? pncpAtual : '';
-    
-    // Limpa todos os campos do formulário, exceto PNCP se for uma UF válida
+    // Limpa todos os campos do formulário (mantém PNCP/UF selecionado)
     setFormData({
       num_ativa: '',
       cadastrado_por: '',
-      pncp: pncpPreservado,
+      pncp: formData.pncp || '',
       uf: '',
       modalidade: '',
       num_licitacao: '',
@@ -1705,165 +1684,52 @@ export default function LicitacaoCadastro() {
       tipo_cadastro: 'manual',
       link_processo: null,
       links: [],
-      sequencial_compra: null,
+      sequencial_compra: '',
       ano_compra: null,
     });
     
     // Limpa checkboxes selecionados (ramos de atividade)
     setSelectedRamos([]);
     setRevisao(false);
+    setOrdemAtual(null);
     
     // Fecha popovers se estiverem abertos
     setTipoPopupOpen(false);
     setOrgaoPopupOpen(false);
     setLinksPopupOpen(false);
     setBuscarPopupOpen(false);
+    setPncpPopupOpen(false);
     
     toast.success('Todos os campos foram limpos!');
-  };
-
-  // Extrai o número do num_ativa (formato: "numero.mes/ano" -> retorna apenas o número)
-  // Pode receber string, número ou null/undefined
-  const extrairNumeroAtiva = (numAtiva: string | number | null | undefined): number | null => {
-    if (numAtiva === null || numAtiva === undefined) return null;
-    
-    // Se for número, retorna diretamente
-    if (typeof numAtiva === 'number') {
-      return isNaN(numAtiva) ? null : numAtiva;
-    }
-    
-    // Se for string, processa
-    const numAtivaStr = String(numAtiva).trim();
-    if (numAtivaStr === '') return null;
-    
-    // Remove espaços e pega a parte antes do ponto
-    const parteNumerica = numAtivaStr.split('.')[0];
-    const numero = parseInt(parteNumerica, 10);
-    return isNaN(numero) ? null : numero;
-  };
-
-  // Busca todas as licitações com num_ativa usando paginação (Supabase limita a 1000 por padrão)
-  const buscarTodasLicitacoesComNumAtiva = async () => {
-    const todasLicitacoes: Array<{ id: string; num_ativa: string | number | null }> = [];
-    let from = 0;
-    const pageSize = 1000;
-    let hasMore = true;
-
-    while (hasMore) {
-      const { data, error } = await supabase
-        .from('contratacoes')
-        .select('id, num_ativa')
-        .not('num_ativa', 'is', null)
-        .order('num_ativa', { ascending: true }) // Ordena por num_ativa antes de paginar
-        .range(from, from + pageSize - 1);
-
-      if (error) {
-        throw error;
-      }
-
-      if (data && data.length > 0) {
-        todasLicitacoes.push(...data);
-        from += pageSize;
-        hasMore = data.length === pageSize; // Se retornou menos que pageSize, não há mais registros
-      } else {
-        hasMore = false;
-      }
-    }
-
-    return todasLicitacoes;
   };
 
   const handleAnterior = async () => {
     setLoading(true);
     try {
-      // Busca o num_ativa atual da licitação no banco (não do formData formatado)
-      let numAtivaAtual: number | null = null;
-      if (contratacaoId) {
-        const { data: licitacaoAtual } = await supabase
-          .from('contratacoes')
-          .select('num_ativa')
-          .eq('id', contratacaoId)
-          .maybeSingle();
-        
-        if (licitacaoAtual?.num_ativa) {
-          numAtivaAtual = extrairNumeroAtiva(licitacaoAtual.num_ativa);
-        }
+      // Inclui todas as licitações (cadastrado true e false); ignora apenas linhas sem ordem
+      // Seta esquerda = anterior = ordem menor. Sem registro atual = primeira (menor ordem)
+      let query = supabase
+        .from('contratacoes')
+        .select('id, ordem')
+        .not('ordem', 'is', null);
+
+      if (ordemAtual !== null) {
+        query = query.lt('ordem', ordemAtual);
       }
-      
-      // Se não encontrou no banco, tenta extrair do formData (pode estar formatado)
-      if (numAtivaAtual === null && formData.num_ativa) {
-        numAtivaAtual = extrairNumeroAtiva(formData.num_ativa);
-      }
-      
-      // Busca todas as licitações com num_ativa usando paginação (para buscar todos os 7001 registros)
-      let todasLicitacoes;
-      try {
-        todasLicitacoes = await buscarTodasLicitacoesComNumAtiva();
-      } catch (error) {
-        console.error('Erro ao buscar licitações:', error);
-        toast.error('Erro ao buscar licitação anterior. Tente novamente.');
-        setLoading(false);
+
+      const { data, error } = await query
+        .order('ordem', { ascending: ordemAtual === null })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        toast.info(ordemAtual === null ? 'Nenhuma licitação encontrada.' : 'Não há licitação anterior.');
         return;
       }
 
-      if (!todasLicitacoes || todasLicitacoes.length === 0) {
-        toast.info('Nenhuma licitação cadastrada encontrada.');
-        setLoading(false);
-        return;
-      }
-
-      // Converte num_ativa para número e ordena numericamente
-      const licitacoesComNumero = todasLicitacoes
-        .map(l => {
-          const numExtraido = extrairNumeroAtiva(l.num_ativa);
-          return {
-            id: l.id,
-            numAtiva: numExtraido,
-            numAtivaOriginal: l.num_ativa
-          };
-        })
-        .filter(l => l.numAtiva !== null && typeof l.numAtiva === 'number');
-
-      // Ordena numericamente (garantindo que são números)
-      const licitacoesOrdenadas = licitacoesComNumero.sort((a, b) => {
-        const numA = a.numAtiva as number;
-        const numB = b.numAtiva as number;
-        return numA - numB;
-      });
-
-      if (licitacoesOrdenadas.length === 0) {
-        toast.info('Nenhuma licitação com número válido encontrada.');
-        setLoading(false);
-        return;
-      }
-
-
-      let licitacaoEncontrada;
-      if (numAtivaAtual === null) {
-        // Se não tem num_ativa atual, busca a menor (primeira)
-        licitacaoEncontrada = licitacoesOrdenadas[0];
-      } else {
-        // Busca a licitação com num_ativa menor (anterior)
-        // Filtra apenas as que são menores que o atual e pega a maior entre elas
-        const menoresQueAtual = licitacoesOrdenadas
-          .filter(l => (l.numAtiva as number) < numAtivaAtual)
-          .sort((a, b) => (b.numAtiva as number) - (a.numAtiva as number)); // Ordena decrescente
-        
-        licitacaoEncontrada = menoresQueAtual[0]; // Pega a primeira (maior entre as menores)
-      }
-
-      if (!licitacaoEncontrada || !licitacaoEncontrada.id) {
-        if (numAtivaAtual === null) {
-          toast.info('Nenhuma licitação cadastrada encontrada.');
-        } else {
-          toast.info('Não há licitação anterior.');
-        }
-        setLoading(false);
-        return;
-      }
-
-      // Navega para a licitação encontrada
-      navigate(`/licitacoes/cadastro?id=${licitacaoEncontrada.id}`);
+      navigate(`/licitacoes/cadastro?id=${data.id}`);
     } catch (error) {
       console.error('Erro ao buscar licitação anterior:', error);
       toast.error('Erro ao buscar licitação anterior. Tente novamente.');
@@ -1875,97 +1741,30 @@ export default function LicitacaoCadastro() {
   const handleProximo = async () => {
     setLoading(true);
     try {
-      // Busca o num_ativa atual da licitação no banco (não do formData formatado)
-      let numAtivaAtual: number | null = null;
-      if (contratacaoId) {
-        const { data: licitacaoAtual } = await supabase
-          .from('contratacoes')
-          .select('num_ativa')
-          .eq('id', contratacaoId)
-          .maybeSingle();
-        
-        if (licitacaoAtual?.num_ativa) {
-          numAtivaAtual = extrairNumeroAtiva(licitacaoAtual.num_ativa);
-        }
+      // Inclui todas as licitações (cadastrado true e false); ignora apenas linhas sem ordem
+      // Seta direita = próximo = ordem maior. Sem registro atual = última (maior ordem)
+      let query = supabase
+        .from('contratacoes')
+        .select('id, ordem')
+        .not('ordem', 'is', null);
+
+      if (ordemAtual !== null) {
+        query = query.gt('ordem', ordemAtual);
       }
-      
-      // Se não encontrou no banco, tenta extrair do formData (pode estar formatado)
-      if (numAtivaAtual === null && formData.num_ativa) {
-        numAtivaAtual = extrairNumeroAtiva(formData.num_ativa);
-      }
-      
-      // Busca todas as licitações com num_ativa usando paginação (para buscar todos os 7001 registros)
-      let todasLicitacoes;
-      try {
-        todasLicitacoes = await buscarTodasLicitacoesComNumAtiva();
-      } catch (error) {
-        console.error('Erro ao buscar licitações:', error);
-        toast.error('Erro ao buscar próxima licitação. Tente novamente.');
-        setLoading(false);
+
+      const { data, error } = await query
+        .order('ordem', { ascending: ordemAtual !== null })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        toast.info(ordemAtual === null ? 'Nenhuma licitação encontrada.' : 'Não há próxima licitação.');
         return;
       }
 
-      if (!todasLicitacoes || todasLicitacoes.length === 0) {
-        toast.info('Nenhuma licitação cadastrada encontrada.');
-        setLoading(false);
-        return;
-      }
-
-      // Converte num_ativa para número e ordena numericamente
-      const licitacoesComNumero = todasLicitacoes
-        .map(l => {
-          const numExtraido = extrairNumeroAtiva(l.num_ativa);
-          return {
-            id: l.id,
-            numAtiva: numExtraido,
-            numAtivaOriginal: l.num_ativa
-          };
-        })
-        .filter(l => l.numAtiva !== null && typeof l.numAtiva === 'number');
-
-      // Ordena numericamente (garantindo que são números)
-      const licitacoesOrdenadas = licitacoesComNumero.sort((a, b) => {
-        const numA = a.numAtiva as number;
-        const numB = b.numAtiva as number;
-        return numA - numB;
-      });
-
-      if (licitacoesOrdenadas.length === 0) {
-        toast.info('Nenhuma licitação com número válido encontrada.');
-        setLoading(false);
-        return;
-      }
-
-      let licitacaoEncontrada;
-      if (numAtivaAtual === null) {
-        // Se não tem num_ativa atual, busca a maior (última da lista ordenada)
-        // Garante que está pegando realmente o maior número
-        licitacaoEncontrada = licitacoesOrdenadas.reduce((maior, atual) => {
-          const numMaior = maior.numAtiva as number;
-          const numAtual = atual.numAtiva as number;
-          return numAtual > numMaior ? atual : maior;
-        }, licitacoesOrdenadas[0]);
-      } else {
-        // Busca a próxima sequencial: a menor entre as que são maiores que o atual
-        const maioresQueAtual = licitacoesOrdenadas
-          .filter(l => (l.numAtiva as number) > numAtivaAtual)
-          .sort((a, b) => (a.numAtiva as number) - (b.numAtiva as number));
-        
-        licitacaoEncontrada = maioresQueAtual[0]; // Pega a primeira (menor entre as maiores)
-      }
-
-      if (!licitacaoEncontrada || !licitacaoEncontrada.id) {
-        if (numAtivaAtual === null) {
-          toast.info('Nenhuma licitação cadastrada encontrada.');
-        } else {
-          toast.info('Não há próxima licitação.');
-        }
-        setLoading(false);
-        return;
-      }
-
-      // Navega para a licitação encontrada
-      navigate(`/licitacoes/cadastro?id=${licitacaoEncontrada.id}`);
+      navigate(`/licitacoes/cadastro?id=${data.id}`);
     } catch (error) {
       console.error('Erro ao buscar próxima licitação:', error);
       toast.error('Erro ao buscar próxima licitação. Tente novamente.');
@@ -1975,11 +1774,11 @@ export default function LicitacaoCadastro() {
   };
 
   const handleNovo = () => {
-    // Limpa todos os campos do formulário para iniciar um novo cadastro
+    // Limpa todos os campos do formulário para iniciar um novo cadastro (mantém PNCP/UF selecionado)
     setFormData({
       num_ativa: '',
       cadastrado_por: '',
-      pncp: '',
+      pncp: formData.pncp || '',
       uf: '',
       modalidade: '',
       num_licitacao: '',
@@ -1989,18 +1788,20 @@ export default function LicitacaoCadastro() {
       tipo_cadastro: 'manual',
       link_processo: null,
       links: [],
-      sequencial_compra: null,
+      sequencial_compra: '',
       ano_compra: null,
     });
     
     // Limpa checkboxes selecionados (ramos de atividade)
     setSelectedRamos([]);
+    setOrdemAtual(null);
     
     // Fecha popovers se estiverem abertos
     setTipoPopupOpen(false);
     setOrgaoPopupOpen(false);
     setLinksPopupOpen(false);
     setBuscarPopupOpen(false);
+    setPncpPopupOpen(false);
     
     // Remove o ID da URL se existir
     if (contratacaoId) {
@@ -2079,43 +1880,29 @@ export default function LicitacaoCadastro() {
   };
 
   const formatarNumeroLicitacao = (): string => {
-    // Sempre prioriza num_licitacao do formData (já formatado com zeros à esquerda se existir)
-    if (formData.num_licitacao && formData.num_licitacao.trim() !== '') {
-      return formData.num_licitacao;
+    const sequencial = formData.sequencial_compra;
+    const ano = formData.ano_compra;
+    if (sequencial && ano) {
+      return `${sequencial}/${ano}`;
     }
-    
-    // Fallback: se não tiver num_licitacao formatado, tenta montar de sequencial/ano
-    // Mas apenas como último recurso
-    if (formData.tipo_cadastro === 'pncp') {
-      const sequencial = formData.sequencial_compra;
-      const ano = formData.ano_compra;
-      if (sequencial !== null && sequencial !== undefined && ano !== null && ano !== undefined) {
-        return `${sequencial}/${ano}`;
-      }
+    if (sequencial && ano === '') {
+      return `${sequencial}/`;
     }
-    // Retorna vazio se não conseguir formatar
+    if (sequencial) {
+      return sequencial;
+    }
     return '';
   };
 
   const parsearNumeroLicitacao = (valor: string) => {
     if (!valor || valor.trim() === '') {
-      return { sequencial: null, ano: null, valorString: '' };
+      return { sequencial: null, ano: null };
     }
     const partes = valor.split('/').map(p => p.trim());
-    // Mantém os zeros à esquerda preservando como string
-    const sequencialStr = partes[0] && partes[0] !== '' ? partes[0] : '';
-    const anoStr = partes[1] && partes[1] !== '' ? partes[1] : '';
+    const sequencial = partes[0] && partes[0] !== '' ? partes[0] : null;
+    const ano = partes[1] && partes[1] !== '' ? partes[1] : null;
     
-    // Converte para número apenas se for válido (para salvar no banco)
-    // Mas preserva a string original para exibição
-    const sequencial = sequencialStr !== '' && /^\d+$/.test(sequencialStr) ? parseInt(sequencialStr) : null;
-    const ano = anoStr !== '' && /^\d+$/.test(anoStr) ? parseInt(anoStr) : null;
-    
-    return { 
-      sequencial, 
-      ano, 
-      valorString: valor.trim() // Mantém o valor original digitado com zeros à esquerda e "/"
-    };
+    return { sequencial, ano };
   };
 
   // Formata data com máscara DD/MM/AAAA enquanto digita
@@ -2908,7 +2695,7 @@ export default function LicitacaoCadastro() {
                 id="num_licitacao"
                 tabIndex={3}
                 placeholder="Digite o número (ex: 02/2026)"
-                value={formData.num_licitacao || formatarNumeroLicitacao()}
+                value={formatarNumeroLicitacao()}
                 onKeyDown={(e) => {
                   if (e.key === 'Tab' && !e.shiftKey) {
                     e.preventDefault();
@@ -2920,22 +2707,20 @@ export default function LicitacaoCadastro() {
                 }}
                 onChange={(e) => {
                   const valor = e.target.value;
-                  // Permite apenas números e "/"
                   const valorLimpo = valor.replace(/[^\d\/]/g, '');
                   
-                  // Limita a uma barra "/" apenas
                   const partes = valorLimpo.split('/');
                   let valorFormatado = partes[0] || '';
                   if (partes.length > 1) {
                     valorFormatado += '/' + partes.slice(1).join('').replace(/\//g, '');
                   }
                   
+                  const hasSlash = valorFormatado.includes('/');
                   const { sequencial, ano } = parsearNumeroLicitacao(valorFormatado);
                   setFormData({ 
                     ...formData, 
-                    sequencial_compra: sequencial,
-                    ano_compra: ano,
-                    num_licitacao: valorFormatado // Preserva o valor original digitado (incluindo zeros à esquerda e "/")
+                    sequencial_compra: sequencial || '',
+                    ano_compra: hasSlash ? (ano || '') : null,
                   });
                 }}
                 className="h-9 bg-white"
@@ -3407,22 +3192,77 @@ export default function LicitacaoCadastro() {
 
       {/* Dialog de alerta de duplicidade */}
       <AlertDialog open={duplicidadeDialogOpen} onOpenChange={setDuplicidadeDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>Licitação já cadastrada</AlertDialogTitle>
-            <AlertDialogDescription>
-              Uma licitação com os mesmos dados (Tipo, Número, Órgão e Conteúdo) já existe no sistema.
+            <AlertDialogTitle className="text-base font-semibold">Deseja Alterar a licitação existente?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-muted-foreground space-y-1.5 mt-2" style={{ fontSize: '12px' }}>
+                {licitacaoDuplicadaInfo && (() => {
+                  const info = licitacaoDuplicadaInfo;
+                  const formatarData = (dt: string | null | undefined) => {
+                    if (!dt) return null;
+                    try {
+                      const d = new Date(dt);
+                      if (isNaN(d.getTime())) return dt;
+                      return d.toLocaleDateString('pt-BR');
+                    } catch { return dt; }
+                  };
+                  const formatarDataHora = (dt: string | null | undefined) => {
+                    if (!dt) return null;
+                    try {
+                      const d = new Date(dt);
+                      if (isNaN(d.getTime())) return dt;
+                      return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ' (horário de Brasília)';
+                    } catch { return dt; }
+                  };
+                  const formatarValor = (v: number | null | undefined) => {
+                    if (v == null) return null;
+                    return v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  };
+
+                  return (
+                    <>
+                      <p><strong>Num. Controle Ativa:</strong> {info.num_ativa ? (() => {
+                        const d = info.created_at ? new Date(info.created_at) : null;
+                        if (d && !isNaN(d.getTime())) {
+                          const mes = String(d.getMonth() + 1).padStart(2, '0');
+                          const ano = String(d.getFullYear()).slice(-2);
+                          return `${info.num_ativa}.${mes}/${ano}`;
+                        }
+                        return info.num_ativa;
+                      })() : '—'}</p>
+                      <p><strong>Data. Licitação:</strong> {formatarData(info.created_at) || '—'}</p>
+                      <p style={{ marginTop: '20px' }}>{info.titulo || '—'}</p>
+                      <p><strong>Local:</strong> {[info.municipio, info.uf].filter(Boolean).join('/') || '—'}</p>
+                      <p><strong>Órgão:</strong> {info.orgao_pncp || '—'}</p>
+                      <p><strong>Unidade Compradora:</strong> {[info.un_cod, info.unidade].filter(Boolean).join(' - ') || '—'}</p>
+                      <p><strong>Modalidade da compra:</strong> {info.modalidade || '—'}</p>
+                      <p><strong>ID Contratação PNCP:</strong> {info.num_licitacao || '—'}</p>
+                      <p><strong>Objeto:</strong> {info.conteudo ? (info.conteudo.length > 200 ? info.conteudo.substring(0, 200) + '...' : info.conteudo) : '—'}</p>
+                      <p><strong>Valor Estimado:</strong> {formatarValor(info.valor_estimado) || '—'}</p>
+                      <p><strong>Data Fim de recebimento de proposta:</strong> {formatarDataHora(info.dt_encerramento_proposta) || '—'}</p>
+                      <p><strong>Última atualização:</strong> {formatarData(info.dt_atualizacao) || '—'}</p>
+                    </>
+                  );
+                })()}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-row gap-2 sm:gap-0">
             <AlertDialogCancel 
-              onClick={() => setDuplicidadeDialogOpen(false)}
+              onClick={() => { setDuplicidadeDialogOpen(false); setLicitacaoDuplicadaInfo(null); }}
               className="sm:mr-2"
             >
               Não
             </AlertDialogCancel>
             <AlertDialogAction 
-              onClick={() => setDuplicidadeDialogOpen(false)}
+              onClick={() => {
+                const conteudoAtual = formData.conteudo || '';
+                const novoConteudo = `\n\n-------------------------\n${conteudoAtual}`;
+                setFormData(prev => ({ ...prev, conteudo: novoConteudo }));
+                setDuplicidadeDialogOpen(false);
+                setLicitacaoDuplicadaInfo(null);
+              }}
               className="bg-[#5046E5] hover:bg-[#4338CA]"
             >
               Sim

@@ -44,6 +44,7 @@ export type Database = {
           municipio: string | null
           num_ativa: string | null
           num_licitacao: string | null
+          ordem: number | null
           orgao_pncp: string | null
           poder: string | null
           regiao: string | null
@@ -86,6 +87,7 @@ export type Database = {
           municipio?: string | null
           num_ativa?: string | null
           num_licitacao?: string | null
+          ordem?: number | null
           orgao_pncp?: string | null
           poder?: string | null
           regiao?: string | null
@@ -128,6 +130,7 @@ export type Database = {
           municipio?: string | null
           num_ativa?: string | null
           num_licitacao?: string | null
+          ordem?: number | null
           orgao_pncp?: string | null
           poder?: string | null
           regiao?: string | null
@@ -356,6 +359,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sites: {
+        Row: {
+          created_at: string
+          dominio: string
+          id: string
+          site: string
+        }
+        Insert: {
+          created_at?: string
+          dominio: string
+          id?: string
+          site: string
+        }
+        Update: {
+          created_at?: string
+          dominio?: string
+          id?: string
+          site?: string
+        }
+        Relationships: []
       }
       tipo_licitacoes: {
         Row: {
