@@ -10,12 +10,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LinksPopup } from '@/components/licitacoes/LinksPopup';
 import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPopup';
@@ -74,6 +73,8 @@ interface TipoLicitacao {
 interface Orgao {
   id: string;
   nome_orgao: string;
+  compras_net?: string | null;
+  compras_mg?: string | null;
 }
 
 const UFS = [
@@ -106,6 +107,7 @@ export default function LicitacaoCadastro() {
   const [orgaoSearchTerm, setOrgaoSearchTerm] = useState('');
   const [buscarOrgaoPopupOpen, setBuscarOrgaoPopupOpen] = useState(false);
   const [termoInicialOrgao, setTermoInicialOrgao] = useState<string>('');
+  const [orgaosParaSelecao, setOrgaosParaSelecao] = useState<Orgao[] | null>(null); // Múltiplos órgãos parecidos para usuário escolher
   const [buscarTipoPopupOpen, setBuscarTipoPopupOpen] = useState(false);
   const [termoInicialTipo, setTermoInicialTipo] = useState<string>('');
   const [conteudoIgnorado, setConteudoIgnorado] = useState<string>(''); // Rastreia conteúdo que o usuário fechou o popup
@@ -187,6 +189,15 @@ export default function LicitacaoCadastro() {
 
   // Map para rastrear últimos tempos de seleção e evitar múltiplas chamadas
   const lastSelectTimeMap = useRef<Map<string, number>>(new Map());
+  // Evita toasts duplicados de "órgão não encontrado" (validação e auto-fill podem disparar juntos)
+  const lastOrgaoNaoEncontradoToastRef = useRef<number>(0);
+  const ORGAO_TOAST_DEBOUNCE_MS = 4000;
+  const showToastOrgaoNaoEncontrado = (msg: string) => {
+    const now = Date.now();
+    if (now - lastOrgaoNaoEncontradoToastRef.current < ORGAO_TOAST_DEBOUNCE_MS) return;
+    lastOrgaoNaoEncontradoToastRef.current = now;
+    toast.warning(msg);
+  };
   // Refs para focar nos inputs de pesquisa quando os dropdowns abrirem
   const pncpSearchInputRef = useRef<HTMLInputElement>(null);
   const tipoSearchInputRef = useRef<HTMLInputElement>(null);
@@ -386,17 +397,19 @@ export default function LicitacaoCadastro() {
     }
     
     if (orgaos.length > 0 && formData.id && formData.orgao_pncp) {
+      const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
       // Verifica se o orgão existe na lista de orgãos cadastrados
       const orgaoEncontrado = orgaos.find(o => 
         o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp
       );
       
       if (!orgaoEncontrado) {
-        // Tenta buscar por nome parcial
-        const orgaoPorNome = orgaos.find(o => 
-          o.nome_orgao.toLowerCase().includes(formData.orgao_pncp?.toLowerCase() || '') ||
-          formData.orgao_pncp?.toLowerCase().includes(o.nome_orgao.toLowerCase() || '')
-        );
+        // Tenta buscar por nome parcial (com normalização para acentos: MUNICIPIO ≈ MUNICÍPIO)
+        const formNorm = normalizarOrgao(formData.orgao_pncp);
+        const orgaoPorNome = orgaos.find(o => {
+          const nomeNorm = normalizarOrgao(o.nome_orgao || '');
+          return nomeNorm.includes(formNorm) || formNorm.includes(nomeNorm);
+        });
         
         if (orgaoPorNome) {
           setFormData(prev => ({
@@ -409,7 +422,7 @@ export default function LicitacaoCadastro() {
             ...prev,
             orgao_pncp: '',
           }));
-          toast.warning(`Órgão "${formData.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
+          showToastOrgaoNaoEncontrado(`Órgão "${formData.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
         }
       }
     }
@@ -424,6 +437,163 @@ export default function LicitacaoCadastro() {
     } catch { /* ignore */ }
   }, [autoPreencherUASG, autoPreencherDATA, autoPreencherTIPO]);
 
+  // Preenchimento automático de Órgão, Data e Tipo a partir do conteúdo do text area quando os checks estiverem marcados
+  useEffect(() => {
+    const conteudo = (formData.conteudo || '').trim();
+    if (!conteudo || (!autoPreencherUASG && !autoPreencherDATA && !autoPreencherTIPO)) return;
+    if (autoPreencherUASG && orgaos.length === 0) return; // Aguarda órgãos carregarem para buscar por UASG/nome
+    if (autoPreencherTIPO && tipos.length === 0) return;  // Aguarda tipos carregarem para buscar modalidade
+
+    const timerId = setTimeout(() => {
+      const updates: Partial<Contratacao> = {};
+      const linhas = conteudo.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+      // UASG → Órgão: prioriza código UASG vinculado ao perfil do órgão, senão busca por nome
+      if (autoPreencherUASG) {
+        let orgaoEncontrado: string | null = null;
+
+        // Coleta códigos UASG do texto (prioridade para buscas explícitas por código)
+        const codigosUASG: string[] = [];
+        const patternsUASG = [
+          /(?:UASG|Código\s*UASG|uasg)[:\s]*(\d{6})/gi,
+          /(?:Órgão|Orgao|orgao):\s*(\d{6})(?:\s|$|\n)/gi,
+          /\b(\d{6})\b/g,
+        ];
+        for (const pattern of patternsUASG) {
+          let m;
+          const re = new RegExp(pattern.source, pattern.flags);
+          while ((m = re.exec(conteudo)) !== null) {
+            if (m[1] && !codigosUASG.includes(m[1])) codigosUASG.push(m[1]);
+          }
+        }
+
+        // Primeiro tenta buscar pelo código UASG vinculado ao perfil (compras_net, compras_mg)
+        for (const cod of codigosUASG) {
+          const orgao = orgaos.find(o => o.compras_net === cod || o.compras_mg === cod);
+          if (orgao) {
+            orgaoEncontrado = orgao.nome_orgao;
+            break;
+          }
+        }
+
+        // Se não encontrou por código, tenta por nome em "Órgão: NOME"
+        if (!orgaoEncontrado) {
+          const matchOrgao = conteudo.match(/(?:Órgão|Orgao|orgao):\s*(.+?)(?:\n|$)/i);
+          if (matchOrgao) {
+            const nomeOuCodigo = matchOrgao[1].trim();
+            if (nomeOuCodigo.replace(/\D/g, '').length !== 6) {
+              const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+              const nomeNorm = normalizarOrgao(nomeOuCodigo);
+              const orgaosEncontrados = orgaos.filter(o => {
+                const nomeOrgaoNorm = normalizarOrgao(o.nome_orgao || '');
+                return nomeOrgaoNorm.includes(nomeNorm) || nomeNorm.includes(nomeOrgaoNorm);
+              });
+              if (orgaosEncontrados.length > 1) {
+                // Múltiplos órgãos parecidos: abre popup para o usuário escolher
+                setOrgaosParaSelecao(orgaosEncontrados);
+                setBuscarOrgaoPopupOpen(true);
+              } else if (orgaosEncontrados.length === 1) {
+                orgaoEncontrado = orgaosEncontrados[0].nome_orgao;
+              } else {
+                showToastOrgaoNaoEncontrado('Nenhum órgão encontrado com o nome informado.');
+              }
+            } else if (codigosUASG.length > 0) {
+              // Órgão com 6 dígitos = código UASG, já tentou buscar e não encontrou
+              showToastOrgaoNaoEncontrado('Nenhum órgão encontrado com o código UASG informado.');
+            }
+          } else if (codigosUASG.length > 0) {
+            showToastOrgaoNaoEncontrado('Nenhum órgão encontrado com o código UASG informado.');
+          }
+        }
+
+        if (orgaoEncontrado && orgaoEncontrado !== formData.orgao_pncp) {
+          updates.orgao_pncp = orgaoEncontrado;
+        }
+      }
+
+      // DATA → Data Licitação: prioriza "Fim: dd/mm/aaaa", senão qualquer dd/mm/aaaa ou dd-mm-aaaa
+      if (autoPreencherDATA) {
+        const matchFim = conteudo.match(/(?:Fim|fim):\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/i);
+        const match = matchFim || conteudo.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+        if (match) {
+          const [, dia, mes, ano] = match;
+          if (dia && mes && ano) {
+            const dataFormatada = `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano}`;
+            if (parsearData(dataFormatada) && dataFormatada !== formData.dt_publicacao) {
+              updates.dt_publicacao = dataFormatada;
+            }
+          }
+        }
+      }
+
+      // TIPO → Tipo da licitação: extrai "Modalidade de Compra: X" e prioriza o tipo que melhor corresponde ao texto
+      if (autoPreencherTIPO) {
+        let tipoEncontrado: TipoLicitacao | null = null;
+        const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+        const matchModalidade = conteudo.match(/(?:Modalidade de Compra|Modalidade):\s*(.+?)(?:\n|$)/i);
+        const termoBusca = matchModalidade ? matchModalidade[1].trim() : null;
+        if (termoBusca) {
+          const termoNorm = normalizar(termoBusca).replace(/\s*-\s*/g, ' ');
+          const palavrasTermo = termoNorm.split(/\s+/).filter(p => p.length > 2 && !/^[eodap]$/i.test(p));
+          const palavrasDescNorm = (desc: string) => normalizar(desc).split(/\s+/).filter(Boolean);
+          const candidatos = tipos
+            .map(t => {
+              const sigla = (t.sigla || '').toLowerCase().trim();
+              const descNorm = normalizar(t.descricao || '');
+              const palavrasDesc = palavrasDescNorm(t.descricao || '');
+              const termoIncluiSigla = sigla.length > 2 ? termoNorm.includes(sigla) : false;
+              const siglaMatchShort = sigla.length <= 2 && termoNorm.includes(sigla);
+              const descContemTermo = descNorm.includes(termoNorm) || termoNorm.includes(descNorm);
+              const descContemTermoPalavras = palavrasTermo.some(p => descNorm.includes(p));
+              if (!termoIncluiSigla && !sigla.includes(termoNorm) && !descContemTermo && !descContemTermoPalavras) return null;
+              if (siglaMatchShort && !descContemTermoPalavras) return null;
+              // Prioriza match exato/início: descrição que começa com o termo é a modalidade principal
+              const descricaoComecaComTermo = descNorm.startsWith(termoNorm) || termoNorm.startsWith(descNorm);
+              const matchComoPalavrasInteiras = palavrasTermo.filter(p =>
+                palavrasDesc.some(pd => pd === p || pd.startsWith(p) && pd.length <= p.length + 2)
+              ).length;
+              const palavrasMatch = palavrasTermo.filter(p => descNorm.includes(p)).length;
+              const bonusEspecifico = descricaoComecaComTermo ? 100 : (matchComoPalavrasInteiras === palavrasTermo.length ? 50 : 0);
+              const score = bonusEspecifico + palavrasMatch;
+              return { tipo: t, score, descLen: descNorm.length };
+            })
+            .filter((c): c is { tipo: TipoLicitacao; score: number; descLen: number } => c !== null && c.score > 0);
+          tipoEncontrado = candidatos.length > 0
+            ? candidatos.sort((a, b) => b.score - a.score || a.descLen - b.descLen)[0].tipo
+            : null;
+        }
+        if (!tipoEncontrado) {
+          for (const linha of linhas) {
+            const linhaNorm = normalizar(linha);
+            const candidatos = tipos
+              .map(t => {
+                const descNorm = normalizar(t.descricao || '');
+                if (!descNorm || !linhaNorm.includes(descNorm)) return null;
+                const palavrasDesc = descNorm.split(/\s+/).filter(p => p.length > 2);
+                const score = palavrasDesc.filter(p => linhaNorm.includes(p)).length;
+                return score > 0 ? { tipo: t, score } : null;
+              })
+              .filter((c): c is { tipo: TipoLicitacao; score: number } => c !== null);
+            tipoEncontrado = candidatos.length > 0
+              ? candidatos.sort((a, b) => b.score - a.score)[0].tipo
+              : null;
+            if (tipoEncontrado) break;
+          }
+        }
+        if (tipoEncontrado && tipoEncontrado.id !== formData.modalidade) {
+          updates.modalidade = tipoEncontrado.id;
+          updates.descricao_modalidade = tipoEncontrado.id;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        setFormData(prev => ({ ...prev, ...updates }));
+      }
+    }, 400);
+
+    return () => clearTimeout(timerId);
+  }, [formData.conteudo, formData.orgao_pncp, formData.dt_publicacao, formData.modalidade, autoPreencherUASG, autoPreencherDATA, autoPreencherTIPO, orgaos, tipos]);
+
   // Verificação automática de duplicidade quando Órgão, Tipo e Número estiverem preenchidos
   useEffect(() => {
     const tipoValido = formData.modalidade && tipos.find(t => t.id === formData.modalidade);
@@ -434,9 +604,11 @@ export default function LicitacaoCadastro() {
     if (tipos.length === 0 || orgaos.length === 0) return;
 
     const tipoId = tipoValido.id;
-    const sequencialCompra = Number(formData.sequencial_compra);
+    const sequencialDigitado = formData.sequencial_compra?.replace(/\D/g, '') || '';
     const anoCompra = Number(formData.ano_compra);
-    if (isNaN(sequencialCompra) || isNaN(anoCompra)) return;
+    if (!sequencialDigitado || isNaN(anoCompra)) return;
+    const sequencialNumero = Number(sequencialDigitado);
+    if (isNaN(sequencialNumero)) return;
 
     let orgaoParaVerificar = formData.orgao_pncp!;
     const orgao = orgaos.find(o => o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp);
@@ -458,7 +630,6 @@ export default function LicitacaoCadastro() {
         .from('contratacoes')
         .select('id, orgao_pncp, num_ativa, created_at, titulo, municipio, uf, unidade, un_cod, modalidade, num_licitacao, conteudo, valor_estimado, dt_encerramento_proposta, dt_atualizacao')
         .eq('descricao_modalidade', tipoId)
-        .eq('sequencial_compra', sequencialCompra)
         .eq('ano_compra', anoCompra);
 
       if (error) {
@@ -469,9 +640,14 @@ export default function LicitacaoCadastro() {
       if (!licitacoesCandidatas?.length) return;
 
       const orgaoNovoNormalizado = normalizarString(orgaoParaVerificar);
-      const licitacaoDuplicada = licitacoesCandidatas.find((lic: { id: string; orgao_pncp: string | null }) => {
+      const licitacaoDuplicada = licitacoesCandidatas.find((lic: { id: string; orgao_pncp: string | null; titulo: string | null }) => {
         const orgaoExistenteNormalizado = normalizarString(lic.orgao_pncp);
-        return orgaoExistenteNormalizado === orgaoNovoNormalizado;
+        if (orgaoExistenteNormalizado !== orgaoNovoNormalizado) return false;
+
+        const numeroDeTitulo = lic.titulo ? extrairNumeroDoTitulo(lic.titulo) : null;
+        if (!numeroDeTitulo) return false;
+        const numeroExistente = Number(numeroDeTitulo.replace(/\D/g, ''));
+        return !isNaN(numeroExistente) && numeroExistente === sequencialNumero;
       });
 
       if (licitacaoDuplicada && (!licitacaoIdAtual || licitacaoDuplicada.id !== licitacaoIdAtual)) {
@@ -511,7 +687,7 @@ export default function LicitacaoCadastro() {
     // Remove espaços extras e normaliza
     
     // Verifica se algum órgão corresponde ao texto digitado
-    const orgaoEncontrado = orgaos.find(orgao => {
+    const orgaosEncontrados = orgaos.filter(orgao => {
       const nomeOrgaoNormalizado = orgao.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
       
       // Verifica se o texto digitado corresponde exatamente ou é parte do nome do órgão
@@ -521,12 +697,12 @@ export default function LicitacaoCadastro() {
              conteudoNormalizado.startsWith(nomeOrgaoNormalizado);
     });
     
-    // Se encontrou um órgão e o texto corresponde apenas ao nome (sem outros caracteres)
-    if (orgaoEncontrado) {
-      const nomeOrgaoNormalizado = orgaoEncontrado.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
+    // Se encontrou órgão(ãos) e o texto corresponde
+    if (orgaosEncontrados.length > 0) {
+      const primeiro = orgaosEncontrados[0];
+      const nomeOrgaoNormalizado = primeiro.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
       
       // Verifica se o texto corresponde exatamente ou é uma parte inicial do nome do órgão
-      // E não contém outros caracteres além do nome do órgão
       // Mínimo de 3 caracteres para evitar abertura muito precoce
       if (nomeOrgaoNormalizado === conteudoNormalizado || 
           (conteudoNormalizado.length >= 3 && nomeOrgaoNormalizado.startsWith(conteudoNormalizado))) {
@@ -541,7 +717,12 @@ export default function LicitacaoCadastro() {
           if (conteudoAtual === conteudoTrim && 
               !buscarOrgaoPopupOpen && 
               conteudoAtualNormalizado !== ignoradoAtualNormalizado) {
-            setTermoInicialOrgao(conteudoTrim);
+            if (orgaosEncontrados.length > 1) {
+              // Múltiplos órgãos parecidos: abre popup já com a lista para escolher
+              setOrgaosParaSelecao(orgaosEncontrados);
+            } else {
+              setTermoInicialOrgao(conteudoTrim);
+            }
             setBuscarOrgaoPopupOpen(true);
           }
         }, 500); // Aguarda 500ms após parar de digitar
@@ -771,7 +952,7 @@ export default function LicitacaoCadastro() {
   };
 
   const loadOrgaos = async () => {
-    const { data } = await supabase.from('orgaos').select('id, nome_orgao').order('nome_orgao');
+    const { data } = await supabase.from('orgaos').select('id, nome_orgao, compras_net, compras_mg').order('nome_orgao');
     if (data) setOrgaos(data);
   };
 
@@ -990,10 +1171,13 @@ export default function LicitacaoCadastro() {
           : formatarConteudoLicitacao(data);
       }
 
-      // Converte sequencial_compra e ano_compra para string preservando zeros
-      let sequencialCompra = data.sequencial_compra != null ? String(data.sequencial_compra) : null;
+      // Extrai o número do titulo (ex: "Edital nº 03" → "03") e combina com ano_compra
+      let sequencialCompra = data.titulo ? extrairNumeroDoTitulo(data.titulo) : null;
       let anoCompra = data.ano_compra != null ? String(data.ano_compra) : null;
       
+      if (!sequencialCompra) {
+        sequencialCompra = data.sequencial_compra != null ? String(data.sequencial_compra) : null;
+      }
       if ((!sequencialCompra || !anoCompra) && data.num_licitacao) {
         const parsed = parsearNumeroLicitacao(data.num_licitacao);
         sequencialCompra = sequencialCompra ?? parsed.sequencial;
@@ -1013,23 +1197,25 @@ export default function LicitacaoCadastro() {
       // Valida e ajusta o orgão para garantir que existe nos orgãos cadastrados
       let orgaoValido = data.orgao_pncp || '';
       if (orgaoValido && orgaos.length > 0) {
+        const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
         // Verifica se o orgão existe na lista de orgãos cadastrados
         const orgaoEncontrado = orgaos.find(o => 
           o.id === orgaoValido || o.nome_orgao === orgaoValido
         );
         
-        // Se não encontrou, tenta buscar por nome parcial
+        // Se não encontrou, tenta buscar por nome parcial (com normalização para acentos)
         if (!orgaoEncontrado) {
-          const orgaoPorNome = orgaos.find(o => 
-            o.nome_orgao.toLowerCase().includes(orgaoValido.toLowerCase()) ||
-            orgaoValido.toLowerCase().includes(o.nome_orgao.toLowerCase())
-          );
+          const orgaoNorm = normalizarOrgao(orgaoValido);
+          const orgaoPorNome = orgaos.find(o => {
+            const nomeNorm = normalizarOrgao(o.nome_orgao || '');
+            return nomeNorm.includes(orgaoNorm) || orgaoNorm.includes(nomeNorm);
+          });
           if (orgaoPorNome) {
             orgaoValido = orgaoPorNome.nome_orgao;
           } else {
             // Se não encontrou, limpa para o usuário selecionar manualmente
             orgaoValido = '';
-            toast.warning(`Órgão "${data.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
+            showToastOrgaoNaoEncontrado(`Órgão "${data.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
           }
         } else {
           orgaoValido = orgaoEncontrado.nome_orgao;
@@ -1138,6 +1324,7 @@ export default function LicitacaoCadastro() {
   };
 
   const handleProximaLicitacaoUF = async () => {
+    setExibirPopupOpen(false);
     const ufSelecionada = formData.pncp;
     
     if (!ufSelecionada || ufSelecionada.trim() === '') {
@@ -1185,6 +1372,7 @@ export default function LicitacaoCadastro() {
   };
 
   const handleLicitacaoEncontrada = async (licitacao: any, ramos: string[]) => {
+    setExibirPopupOpen(false);
     // Se for cadastro Manual, usa o conteúdo diretamente sem formatação
     // Se for PNCP, formata o conteúdo no padrão
     let conteudoFormatado = '';
@@ -1196,10 +1384,13 @@ export default function LicitacaoCadastro() {
       conteudoFormatado = formatarConteudoLicitacao(licitacao);
     }
 
-    // Converte sequencial_compra e ano_compra para string preservando zeros
-    let sequencialCompra = licitacao.sequencial_compra != null ? String(licitacao.sequencial_compra) : null;
+    // Extrai o número do titulo (ex: "Edital nº 03" → "03") e combina com ano_compra
+    let sequencialCompra = licitacao.titulo ? extrairNumeroDoTitulo(licitacao.titulo) : null;
     let anoCompra = licitacao.ano_compra != null ? String(licitacao.ano_compra) : null;
     
+    if (!sequencialCompra) {
+      sequencialCompra = licitacao.sequencial_compra != null ? String(licitacao.sequencial_compra) : null;
+    }
     if ((!sequencialCompra || !anoCompra) && licitacao.num_licitacao) {
       const parsed = parsearNumeroLicitacao(licitacao.num_licitacao);
       sequencialCompra = sequencialCompra ?? parsed.sequencial;
@@ -1218,23 +1409,25 @@ export default function LicitacaoCadastro() {
     // Valida e ajusta o orgão para garantir que existe nos orgãos cadastrados
     let orgaoValido = licitacao.orgao_pncp || '';
     if (orgaoValido && orgaos.length > 0) {
+      const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
       // Verifica se o orgão existe na lista de orgãos cadastrados
       const orgaoEncontrado = orgaos.find(o => 
         o.id === orgaoValido || o.nome_orgao === orgaoValido
       );
       
-      // Se não encontrou, tenta buscar por nome parcial
+      // Se não encontrou, tenta buscar por nome parcial (com normalização para acentos)
       if (!orgaoEncontrado) {
-        const orgaoPorNome = orgaos.find(o => 
-          o.nome_orgao.toLowerCase().includes(orgaoValido.toLowerCase()) ||
-          orgaoValido.toLowerCase().includes(o.nome_orgao.toLowerCase())
-        );
+        const orgaoNorm = normalizarOrgao(orgaoValido);
+        const orgaoPorNome = orgaos.find(o => {
+          const nomeNorm = normalizarOrgao(o.nome_orgao || '');
+          return nomeNorm.includes(orgaoNorm) || orgaoNorm.includes(nomeNorm);
+        });
         if (orgaoPorNome) {
           orgaoValido = orgaoPorNome.nome_orgao;
         } else {
           // Se não encontrou, limpa para o usuário selecionar manualmente
           orgaoValido = '';
-          toast.warning(`Órgão "${licitacao.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
+          showToastOrgaoNaoEncontrado(`Órgão "${licitacao.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
         }
       } else {
         orgaoValido = orgaoEncontrado.nome_orgao;
@@ -1430,6 +1623,7 @@ export default function LicitacaoCadastro() {
         textos_cadastro_manual: isCadastroManual && conteudoParaSalvar ? conteudoParaSalvar : null,
         links: formData.links || [],
         link_processo: formData.link_processo || null,
+        ...(isCadastroManual ? { titulo: formData.sequencial_compra || null } : {}),
       };
 
       // Atualiza updated_at automaticamente quando cadastrado = true
@@ -1699,33 +1893,38 @@ export default function LicitacaoCadastro() {
     setLinksPopupOpen(false);
     setBuscarPopupOpen(false);
     setPncpPopupOpen(false);
+    setExibirPopupOpen(false);
+    
+    // Remove o ID da URL se existir para permitir puxar nova licitação
+    if (contratacaoId) {
+      setSearchParams({});
+    }
     
     toast.success('Todos os campos foram limpos!');
   };
 
   const handleAnterior = async () => {
+    setExibirPopupOpen(false);
     setLoading(true);
     try {
-      // Inclui todas as licitações (cadastrado true e false); ignora apenas linhas sem ordem
-      // Seta esquerda = anterior = ordem menor. Sem registro atual = primeira (menor ordem)
       let query = supabase
         .from('contratacoes')
-        .select('id, ordem')
-        .not('ordem', 'is', null);
+        .select('id, ordem');
 
-      if (ordemAtual !== null) {
-        query = query.lt('ordem', ordemAtual);
+      if (ordemAtual) {
+        // Tem registro aberto: busca o anterior (ordem menor mais próxima)
+        query = query.lt('ordem', ordemAtual).order('ordem', { ascending: false });
+      } else {
+        // Sem registro aberto: busca o primeiro (menor ordem)
+        query = query.order('ordem', { ascending: true });
       }
 
-      const { data, error } = await query
-        .order('ordem', { ascending: ordemAtual === null })
-        .limit(1)
-        .maybeSingle();
+      const { data, error } = await query.limit(1).maybeSingle();
 
       if (error) throw error;
 
       if (!data) {
-        toast.info(ordemAtual === null ? 'Nenhuma licitação encontrada.' : 'Não há licitação anterior.');
+        toast.info(ordemAtual ? 'Não há licitação anterior.' : 'Nenhuma licitação encontrada.');
         return;
       }
 
@@ -1739,28 +1938,27 @@ export default function LicitacaoCadastro() {
   };
 
   const handleProximo = async () => {
+    setExibirPopupOpen(false);
     setLoading(true);
     try {
-      // Inclui todas as licitações (cadastrado true e false); ignora apenas linhas sem ordem
-      // Seta direita = próximo = ordem maior. Sem registro atual = última (maior ordem)
       let query = supabase
         .from('contratacoes')
-        .select('id, ordem')
-        .not('ordem', 'is', null);
+        .select('id, ordem');
 
-      if (ordemAtual !== null) {
-        query = query.gt('ordem', ordemAtual);
+      if (ordemAtual) {
+        // Tem registro aberto: busca o próximo (ordem maior mais próxima)
+        query = query.gt('ordem', ordemAtual).order('ordem', { ascending: true });
+      } else {
+        // Sem registro aberto: busca o último (maior ordem)
+        query = query.order('ordem', { ascending: false });
       }
 
-      const { data, error } = await query
-        .order('ordem', { ascending: ordemAtual !== null })
-        .limit(1)
-        .maybeSingle();
+      const { data, error } = await query.limit(1).maybeSingle();
 
       if (error) throw error;
 
       if (!data) {
-        toast.info(ordemAtual === null ? 'Nenhuma licitação encontrada.' : 'Não há próxima licitação.');
+        toast.info(ordemAtual ? 'Não há próxima licitação.' : 'Nenhuma licitação encontrada.');
         return;
       }
 
@@ -1802,6 +2000,7 @@ export default function LicitacaoCadastro() {
     setLinksPopupOpen(false);
     setBuscarPopupOpen(false);
     setPncpPopupOpen(false);
+    setExibirPopupOpen(false);
     
     // Remove o ID da URL se existir
     if (contratacaoId) {
@@ -1903,6 +2102,17 @@ export default function LicitacaoCadastro() {
     const ano = partes[1] && partes[1] !== '' ? partes[1] : null;
     
     return { sequencial, ano };
+  };
+
+  const extrairNumeroDoTitulo = (titulo: string): string | null => {
+    if (!titulo) return null;
+    const matchComAno = titulo.match(/(\d+(?:[.\-\/]\d+)*)\/\d{4}/);
+    if (matchComAno) return matchComAno[1];
+    const matchNr = titulo.match(/n[ºo°]\s*(?:\S+\s+)*?(\d+(?:[.\-\/]\d+)*)/i);
+    if (matchNr) return matchNr[1];
+    const allMatches = titulo.match(/\d+(?:[.\-\/]\d+)*/g);
+    if (allMatches && allMatches.length > 0) return allMatches[allMatches.length - 1];
+    return null;
   };
 
   // Formata data com máscara DD/MM/AAAA enquanto digita
@@ -2167,7 +2377,7 @@ export default function LicitacaoCadastro() {
     <MainLayout>
       <div className="flex gap-[16px] h-full overflow-hidden">
         {/* Formulário Central */}
-        <div className="flex-1 bg-white rounded-lg border border-border pl-6 pr-6 pt-4 pb-4 flex flex-col relative min-w-[600px] max-w-[1400px] overflow-x-auto">
+        <div className="flex-1 bg-white rounded-lg border border-border pl-6 pr-6 pt-4 pb-4 flex flex-col relative min-w-[600px] max-w-[1400px] overflow-x-auto overflow-y-auto min-h-0">
           {/* Título e Botões de ação */}
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-xl font-bold text-[#262626]">Cadastros</h1>
@@ -2789,10 +2999,10 @@ export default function LicitacaoCadastro() {
             </div>
           </div>
 
-          {/* Seção Órgão */}
-          <div className="flex-1 flex flex-col min-h-0">
+          {/* 1. Input Órgão */}
+          <div className="flex-shrink-0">
             <Label htmlFor="orgao" className="text-sm font-normal mb-2 block text-[#262626]">Orgão</Label>
-            <div className="flex gap-2 mb-2">
+            <div className="flex gap-2">
               <Popover 
                 open={orgaoPopupOpen} 
                 onOpenChange={(open) => {
@@ -2961,21 +3171,25 @@ export default function LicitacaoCadastro() {
                 <RotateCw className="h-4 w-4" />
               </Button>
             </div>
+          </div>
+
+          {/* 2. Text Area */}
+          <div className="flex-shrink-0 mt-4">
             <Textarea
               id="conteudo"
               tabIndex={6}
               value={formData.conteudo || ''}
               onChange={(e) => setFormData({ ...formData, conteudo: e.target.value })}
-              className="resize-none flex-1 min-h-[120px] text-[12px] text-[#1a1a1a] bg-white"
+              className="resize-none min-h-[189px] w-full text-[12px] text-[#1a1a1a] bg-white"
               placeholder=""
             />
           </div>
 
-          {/* Botões inferiores */}
-          <div className="flex gap-2 mt-4 items-end">
+          {/* 3. Botões */}
+          <div className="flex flex-wrap gap-4 mt-4 items-end flex-shrink-0 shrink-0">
             <Button 
               variant="outline" 
-              className="bg-gray-100 hover:bg-gray-200 text-[#262626]"
+              className="shrink-0 bg-gray-100 hover:bg-gray-200 text-[#262626]"
               onClick={() => setLinksPopupOpen(true)}
             >
               <Link2 className="w-4 h-4 mr-2" />
@@ -2983,13 +3197,16 @@ export default function LicitacaoCadastro() {
             </Button>
             <Button 
               variant="outline" 
-              className="bg-gray-100 hover:bg-gray-200 text-[#262626]"
-              onClick={() => setExibirPopupOpen(true)}
+              className={cn(
+                "shrink-0 bg-gray-100 hover:bg-gray-200 text-[#262626]",
+                exibirPopupOpen && "ring-2 ring-[#02572E] ring-offset-1"
+              )}
+              onClick={() => setExibirPopupOpen(prev => !prev)}
             >
-              Exibir Licitação
+              {exibirPopupOpen ? 'Ocultar Licitação' : 'Exibir Licitação'}
             </Button>
             {/* Datepicker bloqueado para data de publicação */}
-            <div>
+            <div className="shrink-0">
               <div className="space-y-1">
                 <Label className="text-sm font-normal text-[#262626]">Data de Publicação</Label>
                 <div className="relative">
@@ -3012,6 +3229,75 @@ export default function LicitacaoCadastro() {
               </div>
             </div>
           </div>
+
+          {/* 4. Área Exibir Licitação */}
+          {exibirPopupOpen && (
+            <div className="mt-6 w-full flex-shrink-0 min-h-[400px] border border-border rounded-lg overflow-hidden flex flex-col">
+              <div className="px-4 py-2 bg-gray-50 border-b border-border text-sm font-medium text-[#262626] flex-shrink-0">
+                Exibir Licitação
+              </div>
+              <div className="flex-1 min-h-[300px] p-4 overflow-auto">
+                {formData.link_processo && formData.link_processo.trim() !== '' ? (
+                  <iframe
+                    src={formData.link_processo}
+                    className="w-full h-full min-h-[400px] border border-gray-200 rounded-lg"
+                    title="Licitação"
+                    allowFullScreen
+                  />
+                ) : (() => {
+                  const orgao = orgaos.find(o => o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp);
+                  const uasg = orgao?.compras_net;
+                  let seq = formData.sequencial_compra;
+                  let ano = formData.ano_compra != null ? String(formData.ano_compra) : '';
+                  if ((!seq || !ano) && formData.num_licitacao) {
+                    const parsed = formData.num_licitacao.split('/').map(p => p.trim());
+                    seq = seq || parsed[0] || '';
+                    ano = ano || (parsed[1] || '');
+                  }
+                  const temSequencialAno = seq && seq.trim() !== '' && ano && ano.trim() !== '';
+                  const podeBuscarComprasNet = uasg && temSequencialAno;
+                  const COMPRAS_NET_URL = 'https://www.comprasnet.gov.br/acesso.asp?url=/ConsultaLicitacoes/ConsLicitacao_Filtro.asp';
+
+                  const handleBuscarComprasNet = () => {
+                    window.open(COMPRAS_NET_URL, '_blank', 'noopener,noreferrer');
+                    const textoBusca = `UASG: ${uasg} | Nº Licitação: ${seq}/${ano}`;
+                    navigator.clipboard.writeText(textoBusca).then(() => {
+                      toast.success('Dados copiados! Cole no ComprasNet para preencher a busca.');
+                    }).catch(() => {
+                      toast.info('Abra o ComprasNet e pesquise por UASG e número da licitação.');
+                    });
+                  };
+
+                  return (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[200px] border border-gray-200 rounded-lg bg-gray-50 p-6 gap-4">
+                      {podeBuscarComprasNet ? (
+                        <>
+                          <p className="text-muted-foreground text-sm text-center">
+                            Nenhum link de processo cadastrado. Esta licitação pode estar no ComprasNet (Governo Federal).
+                          </p>
+                          <Button
+                            variant="outline"
+                            onClick={handleBuscarComprasNet}
+                            className="gap-2"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                            Buscar no ComprasNet
+                          </Button>
+                          <p className="text-xs text-muted-foreground text-center max-w-sm">
+                            UASG: {uasg} • Nº: {seq}/{ano}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-muted-foreground text-sm text-center">
+                          Nenhum link de processo cadastrado. Cadastre um link através do botão &quot;Links (F2)&quot;.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Divisor redimensionável */}
@@ -3106,6 +3392,8 @@ export default function LicitacaoCadastro() {
         onOpenChange={(open) => {
           setBuscarOrgaoPopupOpen(open);
           if (!open) {
+            // Limpa órgãos para seleção ao fechar (quando eram múltiplos parecidos)
+            setOrgaosParaSelecao(null);
             // Quando o popup é fechado, marca o conteúdo atual como ignorado para não reabrir automaticamente
             const conteudoAtual = (formData.conteudo || '').trim();
             if (conteudoAtual) {
@@ -3117,10 +3405,12 @@ export default function LicitacaoCadastro() {
         }}
         onOrgaoSelecionado={(orgao) => {
           setFormData({ ...formData, orgao_pncp: orgao.nome_orgao });
+          setOrgaosParaSelecao(null); // Limpa ao selecionar
           // Limpa o conteúdo ignorado quando um órgão é selecionado
           setConteudoIgnorado('');
         }}
-        termoInicial={termoInicialOrgao}
+        termoInicial={orgaosParaSelecao ? '' : termoInicialOrgao}
+        orgaosIniciais={orgaosParaSelecao?.map(o => ({ id: o.id, nome_orgao: o.nome_orgao, compras_net: o.compras_net, compras_mg: o.compras_mg }))}
       />
 
       <BuscarTipoPopup
@@ -3141,33 +3431,6 @@ export default function LicitacaoCadastro() {
         }}
         termoInicial={termoInicialTipo}
       />
-
-      {/* Popup de Exibir Licitação */}
-      <Dialog open={exibirPopupOpen} onOpenChange={setExibirPopupOpen}>
-        <DialogContent className="sm:max-w-[90vw] max-w-[90vw] w-[90vw] h-[90vh] p-0 gap-0">
-          <DialogHeader className="p-6 pb-4">
-            <DialogTitle className="text-xl font-semibold text-[#262626]">
-              Exibir Licitação
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex-1 px-6 pb-6">
-            {formData.link_processo && formData.link_processo.trim() !== '' ? (
-              <iframe
-                src={formData.link_processo}
-                className="w-full h-[calc(90vh-120px)] border border-gray-200 rounded-lg"
-                title="Licitação"
-                allowFullScreen
-              />
-            ) : (
-              <div className="flex items-center justify-center h-[calc(90vh-120px)] border border-gray-200 rounded-lg bg-gray-50">
-                <p className="text-muted-foreground text-sm">
-                  Nenhum link de processo cadastrado. Cadastre um link através do botão "Links (F2)".
-                </p>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Dialog de confirmação de exclusão */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

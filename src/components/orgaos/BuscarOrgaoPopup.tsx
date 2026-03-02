@@ -31,11 +31,26 @@ interface Orgao {
   compras_mg: string | null;
 }
 
+/** Órgão mínimo para orgaosIniciais - aceita objetos com id, nome_orgao e campos opcionais */
+interface OrgaoMinimo {
+  id: string;
+  nome_orgao: string;
+  compras_net?: string | null;
+  compras_mg?: string | null;
+  uf?: string | null;
+  cidade_ibge?: string | null;
+  cidade_nome?: string | null;
+  endereco?: string | null;
+  telefone?: string | null;
+}
+
 interface BuscarOrgaoPopupProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onOrgaoSelecionado: (orgao: Orgao) => void;
   termoInicial?: string;
+  /** Quando preenchido, exibe estes órgãos diretamente para o usuário escolher (ex.: múltiplos órgãos parecidos) */
+  orgaosIniciais?: OrgaoMinimo[];
 }
 
 const UFS = [
@@ -52,11 +67,25 @@ const normalizarString = (str: string): string => {
     .replace(/[\u0300-\u036f]/g, '');
 };
 
+// Normaliza órgão para o formato esperado (preenche campos opcionais)
+const normalizarOrgao = (o: { id: string; nome_orgao: string; compras_net?: string | null; compras_mg?: string | null; uf?: string | null; cidade_ibge?: string | null; cidade_nome?: string | null; endereco?: string | null; telefone?: string | null }): Orgao => ({
+  id: o.id,
+  nome_orgao: o.nome_orgao,
+  uf: o.uf ?? null,
+  cidade_ibge: o.cidade_ibge ?? null,
+  cidade_nome: o.cidade_nome ?? null,
+  endereco: o.endereco ?? null,
+  telefone: o.telefone ?? null,
+  compras_net: o.compras_net ?? null,
+  compras_mg: o.compras_mg ?? null,
+});
+
 export function BuscarOrgaoPopup({
   open,
   onOpenChange,
   onOrgaoSelecionado,
   termoInicial,
+  orgaosIniciais,
 }: BuscarOrgaoPopupProps) {
   const navigate = useNavigate();
   const [filtroOrgao, setFiltroOrgao] = useState('');
@@ -174,6 +203,9 @@ export function BuscarOrgaoPopup({
     } else {
       // Quando o popup abre, garante que está no centro
       setPosition({ x: 0, y: 0 });
+      if (orgaosIniciais && orgaosIniciais.length > 0) {
+        setOrgaos(orgaosIniciais.map(normalizarOrgao));
+      }
       if (termoInicial && termoInicial.trim() && !termoInicialAplicado) {
         // Se o popup abrir com um termo inicial, preenche o filtro
         setFiltroOrgao(termoInicial);
@@ -182,7 +214,7 @@ export function BuscarOrgaoPopup({
         ultimaCombinacaoFiltrosRef.current = '';
       }
     }
-  }, [open, termoInicial, termoInicialAplicado]);
+  }, [open, termoInicial, termoInicialAplicado, orgaosIniciais]);
 
   // Aplica o transform diretamente no elemento DOM sem animação
   useEffect(() => {
@@ -316,7 +348,9 @@ export function BuscarOrgaoPopup({
             onMouseDown={handleMouseDown}
           >
             <DialogTitle className="text-lg font-semibold text-[#262626]">
-              Pesquisa Avançada de Órgãos → {orgaos.length}
+              {orgaosIniciais && orgaosIniciais.length > 0
+                ? `Selecione o órgão (${orgaos.length} encontrado${orgaos.length > 1 ? 's' : ''})`
+                : `Pesquisa Avançada de Órgãos → ${orgaos.length}`}
             </DialogTitle>
           </DialogHeader>
 
@@ -380,7 +414,8 @@ export function BuscarOrgaoPopup({
             </ScrollArea>
           </div>
 
-          {/* Área de filtros */}
+          {/* Área de filtros - oculta quando há orgaosIniciais (modo seleção) */}
+          {(!orgaosIniciais || orgaosIniciais.length === 0) && (
           <div className="p-4 space-y-4 border-b bg-gray-50">
             <div className="flex items-end gap-3">
               <div className="space-y-1 flex-1 min-w-0">
@@ -472,6 +507,7 @@ export function BuscarOrgaoPopup({
               </p>
             </div>
           </div>
+          )}
         </div>
         <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none z-10">
           <X className="h-4 w-4" />

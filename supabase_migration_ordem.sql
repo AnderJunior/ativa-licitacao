@@ -1,10 +1,18 @@
 -- Coluna ordem em contratacoes (navegação rápida)
 -- Execute no SQL Editor do Supabase
 
--- 1. Adiciona coluna com auto-incremento
-ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS ordem SERIAL;
+-- ============================================================
+-- MIGRAÇÃO INICIAL (já executada - manter para referência)
+-- ============================================================
+-- ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS ordem SERIAL;
+-- CREATE INDEX IF NOT EXISTS idx_contratacoes_ordem ON contratacoes(ordem);
 
--- 2. Preenche registros existentes na ordem do num_ativa (num_ativa pode ser text ou integer)
+-- ============================================================
+-- CORREÇÃO: Renumera ordem de 1 a N sequencialmente
+-- Execute este bloco para corrigir valores altos na coluna ordem
+-- ============================================================
+
+-- 1. Renumera todos os registros sequencialmente (1, 2, 3, ...) ordenados por num_ativa
 WITH ordered AS (
   SELECT id, ROW_NUMBER() OVER (
     ORDER BY 
@@ -18,8 +26,8 @@ WITH ordered AS (
 )
 UPDATE contratacoes c SET ordem = o.rn FROM ordered o WHERE c.id = o.id;
 
--- 3. Reseta a sequence para o valor máximo atual
-SELECT setval(pg_get_serial_sequence('contratacoes', 'ordem'), (SELECT COALESCE(MAX(ordem), 0) FROM contratacoes));
-
--- 4. Índice para buscas instantâneas
-CREATE INDEX IF NOT EXISTS idx_contratacoes_ordem ON contratacoes(ordem);
+-- 2. Reseta a sequence para continuar a partir do último valor
+SELECT setval(
+  pg_get_serial_sequence('contratacoes', 'ordem'),
+  (SELECT COALESCE(MAX(ordem), 0) FROM contratacoes)
+);
