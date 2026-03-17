@@ -79,6 +79,62 @@ CREATE TABLE IF NOT EXISTS public.tipo_licitacoes (
 
 ALTER TABLE public.tipo_licitacoes ENABLE ROW LEVEL SECURITY;
 
+-- Grupos (cargos/funções)
+CREATE TABLE IF NOT EXISTS public.grupos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nome TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.grupos ENABLE ROW LEVEL SECURITY;
+
+-- Grupos-Usuários (vínculo N:N)
+CREATE TABLE IF NOT EXISTS public.grupos_usuarios (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    grupo_id UUID REFERENCES public.grupos(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    UNIQUE(grupo_id, user_id)
+);
+
+ALTER TABLE public.grupos_usuarios ENABLE ROW LEVEL SECURITY;
+
+-- Menus do sistema (para permissões)
+CREATE TABLE IF NOT EXISTS public.menus (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nome TEXT UNIQUE NOT NULL,
+    path TEXT,
+    ordem INTEGER NOT NULL DEFAULT 0,
+    parent_id UUID REFERENCES public.menus(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.menus ENABLE ROW LEVEL SECURITY;
+
+-- Permissões por grupo
+CREATE TABLE IF NOT EXISTS public.grupos_permissoes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    grupo_id UUID REFERENCES public.grupos(id) ON DELETE CASCADE NOT NULL,
+    menu_id UUID REFERENCES public.menus(id) ON DELETE CASCADE NOT NULL,
+    abrir BOOLEAN NOT NULL DEFAULT false,
+    salvar BOOLEAN NOT NULL DEFAULT false,
+    excluir BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    UNIQUE(grupo_id, menu_id)
+);
+
+ALTER TABLE public.grupos_permissoes ENABLE ROW LEVEL SECURITY;
+
+-- Caixas de E-mail
+CREATE TABLE IF NOT EXISTS public.caixas_email (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sigla TEXT UNIQUE NOT NULL,
+    descricao TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.caixas_email ENABLE ROW LEVEL SECURITY;
+
 -- Sites
 CREATE TABLE IF NOT EXISTS public.sites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -249,6 +305,71 @@ ON public.tipo_licitacoes FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "Authenticated users can delete tipo_licitacoes" 
 ON public.tipo_licitacoes FOR DELETE TO authenticated USING (true);
 
+-- Grupos
+CREATE POLICY "Authenticated users can view grupos" 
+ON public.grupos FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert grupos" 
+ON public.grupos FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update grupos" 
+ON public.grupos FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete grupos" 
+ON public.grupos FOR DELETE TO authenticated USING (true);
+
+-- Menus
+CREATE POLICY "Authenticated users can view menus" 
+ON public.menus FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert menus" 
+ON public.menus FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update menus" 
+ON public.menus FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete menus" 
+ON public.menus FOR DELETE TO authenticated USING (true);
+
+-- Grupos Permissões
+CREATE POLICY "Authenticated users can view grupos_permissoes" 
+ON public.grupos_permissoes FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert grupos_permissoes" 
+ON public.grupos_permissoes FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update grupos_permissoes" 
+ON public.grupos_permissoes FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete grupos_permissoes" 
+ON public.grupos_permissoes FOR DELETE TO authenticated USING (true);
+
+-- Grupos Usuários
+CREATE POLICY "Authenticated users can view grupos_usuarios" 
+ON public.grupos_usuarios FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert grupos_usuarios" 
+ON public.grupos_usuarios FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update grupos_usuarios" 
+ON public.grupos_usuarios FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete grupos_usuarios" 
+ON public.grupos_usuarios FOR DELETE TO authenticated USING (true);
+
+-- Caixas de E-mail
+CREATE POLICY "Authenticated users can view caixas_email" 
+ON public.caixas_email FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert caixas_email" 
+ON public.caixas_email FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update caixas_email" 
+ON public.caixas_email FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete caixas_email" 
+ON public.caixas_email FOR DELETE TO authenticated USING (true);
+
 -- Sites
 CREATE POLICY "Authenticated users can view sites" 
 ON public.sites FOR SELECT TO authenticated USING (true);
@@ -334,8 +455,33 @@ ON public.contratacoes_marcacoes FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "Authenticated users can delete contratacoes_marcacoes" 
 ON public.contratacoes_marcacoes FOR DELETE TO authenticated USING (true);
 
+-- Seed grupos padrão
+INSERT INTO public.grupos (nome) VALUES 
+    ('Administrador'),
+    ('COORDENADOR'),
+    ('DIGITADOR')
+ON CONFLICT (nome) DO NOTHING;
 
+-- Seed menus
+INSERT INTO public.menus (nome, path, ordem, parent_id) VALUES ('ATIVA', NULL, 0, NULL)
+ON CONFLICT (nome) DO NOTHING;
 
+INSERT INTO public.menus (nome, path, ordem, parent_id)
+SELECT m.nome, m.path, m.ordem, (SELECT id FROM public.menus WHERE nome = 'ATIVA' LIMIT 1)
+FROM (VALUES
+  ('Licitação - Cadastro', '/licitacoes/cadastro', 1),
+  ('Licitação - Consulta', '/licitacoes/consulta', 2),
+  ('Licitação - Tipos de Licitação', '/licitacoes/tipos', 3),
+  ('Licitação - Marcação Pendente', '/licitacoes/marcacoes-pendentes', 4),
+  ('Órgãos - Cadastro', '/orgaos/cadastro', 5),
+  ('Órgãos - Consulta', '/orgaos/sem-ibge', 6),
+  ('Órgãos - Agrupamentos', '/orgaos/agrupamentos', 7),
+  ('Empresa - Sites', '/empresa/sites', 8),
+  ('Empresa - Atividades', '/empresa/atividades', 9),
+  ('Empresa - Caixas de E-mail', '/empresa/caixas-email', 10),
+  ('Empresa - Permissões de Acesso', '/empresa/permissoes', 11)
+) AS m(nome, path, ordem)
+ON CONFLICT (nome) DO NOTHING;
 
 
 

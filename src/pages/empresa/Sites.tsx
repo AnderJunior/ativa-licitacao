@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, ChevronsUpDown } from 'lucide-react';
+import { Loader2, Plus, Trash2, Pencil, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Site {
@@ -33,6 +33,11 @@ export default function Sites() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [newSiteInput, setNewSiteInput] = useState('');
+  // Edição
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingSite, setEditingSite] = useState<Site | null>(null);
+  const [editSiteInput, setEditSiteInput] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   
   // Filtros
   const [filtroDominio, setFiltroDominio] = useState('');
@@ -170,6 +175,51 @@ export default function Sites() {
     }
   };
 
+  const openEditDialog = (site: Site) => {
+    setEditingSite(site);
+    setEditSiteInput(site.site);
+    setEditDialogOpen(true);
+  };
+
+  const closeEditDialog = () => {
+    setEditDialogOpen(false);
+    setEditingSite(null);
+    setEditSiteInput('');
+  };
+
+  const handleUpdate = async () => {
+    if (!editingSite) return;
+    if (!editSiteInput.trim()) {
+      toast.error('Site é obrigatório');
+      return;
+    }
+
+    const parsed = parseSiteUrl(editSiteInput);
+    if (!parsed) {
+      toast.error('URL inválida');
+      return;
+    }
+
+    setSavingEdit(true);
+    const { error } = await supabase
+      .from('sites')
+      .update({ dominio: parsed.dominio, site: parsed.site })
+      .eq('id', editingSite.id);
+
+    if (error) {
+      if (error.code === '23505') {
+        toast.error('Este domínio já existe');
+      } else {
+        toast.error('Erro ao atualizar: ' + error.message);
+      }
+    } else {
+      toast.success('Site atualizado!');
+      closeEditDialog();
+      loadSites();
+    }
+    setSavingEdit(false);
+  };
+
   return (
     <MainLayout>
       <div className="bg-white rounded-lg border border-border p-6 h-full flex flex-col">
@@ -218,11 +268,50 @@ export default function Sites() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          {/* Dialog de Edição */}
+          <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="text-[#262626]">Editar Site</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-site" className="text-[#262626]">Site *</Label>
+                  <Input
+                    id="edit-site"
+                    value={editSiteInput}
+                    onChange={(e) => setEditSiteInput(e.target.value)}
+                    placeholder="Ex: teste.com/oocs ou www.teste.com/oocs"
+                    className="bg-white"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleUpdate();
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    O domínio e URL completa serão atualizados automaticamente
+                  </p>
+                </div>
+              </div>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="outline" onClick={closeEditDialog}>Cancelar</Button>
+                </DialogClose>
+                <Button onClick={handleUpdate} disabled={savingEdit} className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                  {savingEdit && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Atualizar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Filtros */}
-        <div className="mb-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="mb-4">
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label htmlFor="filtro-dominio" className="text-sm font-normal text-[#262626]">Domínio</Label>
               <Input
@@ -243,10 +332,9 @@ export default function Sites() {
                 className="bg-white h-9"
               />
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="filtro-orgao" className="text-sm font-normal text-[#262626]">Orgão</Label>
-            <Popover 
+            <div className="space-y-2">
+              <Label htmlFor="filtro-orgao" className="text-sm font-normal text-[#262626]">Orgão</Label>
+              <Popover 
               open={orgaoPopupOpen} 
               onOpenChange={(open) => {
                 setOrgaoPopupOpen(open);
@@ -321,6 +409,7 @@ export default function Sites() {
                 Limpar filtro de orgão
               </Button>
             )}
+            </div>
           </div>
         </div>
 
@@ -356,32 +445,43 @@ export default function Sites() {
                         {site.site}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-right">
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
-                              title="Excluir"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Excluir site?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Tem certeza que deseja excluir o site "{site.dominio}"? Esta ação não pode ser desfeita.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(site.id)}>
-                                Excluir
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 rounded-full bg-[#02572E]/10 hover:bg-[#02572E] text-[#02572E] hover:text-white p-0"
+                            title="Editar"
+                            onClick={() => openEditDialog(site)}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button 
+                                variant="ghost" 
+                                size="icon"
+                                className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
+                                title="Excluir"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Excluir site?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Tem certeza que deseja excluir o site "{site.dominio}"? Esta ação não pode ser desfeita.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => handleDelete(site.id)}>
+                                  Excluir
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
                       </td>
                     </tr>
                   ))}

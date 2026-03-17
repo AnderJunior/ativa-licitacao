@@ -8,8 +8,13 @@ const routeNames: Record<string, string> = {
   'tipos': 'Tipos',
   'marcacoes-pendentes': 'Marcações Pendentes',
   'orgaos': 'Órgãos',
-  'sem-ibge': 'Sem IBGE',
+  'sem-ibge': 'Consulta',
   'agrupamentos': 'Agrupamentos',
+  'empresa': 'Empresa',
+  'sites': 'Sites',
+  'atividades': 'Atividades',
+  'caixas-email': 'Caixas de E-mail',
+  'permissoes': 'Permissões de Acesso',
 };
 
 export function Breadcrumb() {

@@ -298,6 +298,7 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string
+          cpf: string | null
           email: string | null
           full_name: string | null
           id: string
@@ -306,6 +307,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          cpf?: string | null
           email?: string | null
           full_name?: string | null
           id?: string
@@ -314,6 +316,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          cpf?: string | null
           email?: string | null
           full_name?: string | null
           id?: string
@@ -359,6 +362,154 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      grupos: {
+        Row: {
+          id: string
+          nome: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          nome: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          nome?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      menus: {
+        Row: {
+          id: string
+          nome: string
+          path: string | null
+          ordem: number
+          parent_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          nome: string
+          path?: string | null
+          ordem?: number
+          parent_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          nome?: string
+          path?: string | null
+          ordem?: number
+          parent_id?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menus_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      grupos_permissoes: {
+        Row: {
+          id: string
+          grupo_id: string
+          menu_id: string
+          abrir: boolean
+          salvar: boolean
+          excluir: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          grupo_id: string
+          menu_id: string
+          abrir?: boolean
+          salvar?: boolean
+          excluir?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          grupo_id?: string
+          menu_id?: string
+          abrir?: boolean
+          salvar?: boolean
+          excluir?: boolean
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grupos_permissoes_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "grupos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grupos_permissoes_menu_id_fkey"
+            columns: ["menu_id"]
+            isOneToOne: false
+            referencedRelation: "menus"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      grupos_usuarios: {
+        Row: {
+          id: string
+          grupo_id: string
+          user_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          grupo_id: string
+          user_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          grupo_id?: string
+          user_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grupos_usuarios_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "grupos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      caixas_email: {
+        Row: {
+          id: string
+          sigla: string
+          descricao: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          sigla: string
+          descricao: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          sigla?: string
+          descricao?: string
+          created_at?: string
+        }
+        Relationships: []
       }
       sites: {
         Row: {

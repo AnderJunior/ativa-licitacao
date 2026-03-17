@@ -15,7 +15,9 @@ import {
   UsersRound,
   Building,
   Globe,
-  ListTree
+  ListTree,
+  Mail,
+  Shield
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -48,7 +50,7 @@ const menuItems: MenuItem[] = [
     icon: Users,
     children: [
       { label: 'Cadastro', path: '/orgaos/cadastro', icon: Plus },
-      { label: 'Sem IBGE', path: '/orgaos/sem-ibge', icon: UserX },
+      { label: 'Consulta', path: '/orgaos/sem-ibge', icon: UserX },
       { label: 'Agrupamentos', path: '/orgaos/agrupamentos', icon: UsersRound },
     ],
   },
@@ -58,6 +60,8 @@ const menuItems: MenuItem[] = [
     children: [
       { label: 'Sites', path: '/empresa/sites', icon: Globe },
       { label: 'Atividades', path: '/empresa/atividades', icon: ListTree },
+      { label: 'Caixas de E-mail', path: '/empresa/caixas-email', icon: Mail },
+      { label: 'Permissões de Acesso', path: '/empresa/permissoes', icon: Shield },
     ],
   },
 ];
@@ -181,7 +185,7 @@ export function Sidebar() {
                         key={child.path}
                         onClick={() => navigate(child.path)}
                         className={cn(
-                          "w-full flex items-center gap-3 pl-5 pr-4 py-2.5 transition-colors text-[14px]",
+                          "w-full flex items-center gap-3 pl-5 pr-4 py-2.5 transition-colors text-[12px]",
                           isActive(child.path) 
                             ? "bg-[#E5EEEA] text-[#02572E] font-medium"
                             : "text-gray-600 hover:bg-[#E5EEEA]"
