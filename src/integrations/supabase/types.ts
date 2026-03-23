@@ -363,24 +363,6 @@ export type Database = {
           },
         ]
       }
-      grupos: {
-        Row: {
-          id: string
-          nome: string
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          nome: string
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          nome?: string
-          created_at?: string
-        }
-        Relationships: []
-      }
       menus: {
         Row: {
           id: string
@@ -416,10 +398,10 @@ export type Database = {
           },
         ]
       }
-      grupos_permissoes: {
+      user_permissoes: {
         Row: {
           id: string
-          grupo_id: string
+          user_id: string
           menu_id: string
           abrir: boolean
           salvar: boolean
@@ -428,7 +410,7 @@ export type Database = {
         }
         Insert: {
           id?: string
-          grupo_id: string
+          user_id: string
           menu_id: string
           abrir?: boolean
           salvar?: boolean
@@ -437,7 +419,7 @@ export type Database = {
         }
         Update: {
           id?: string
-          grupo_id?: string
+          user_id?: string
           menu_id?: string
           abrir?: boolean
           salvar?: boolean
@@ -446,46 +428,10 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "grupos_permissoes_grupo_id_fkey"
-            columns: ["grupo_id"]
-            isOneToOne: false
-            referencedRelation: "grupos"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "grupos_permissoes_menu_id_fkey"
+            foreignKeyName: "user_permissoes_menu_id_fkey"
             columns: ["menu_id"]
             isOneToOne: false
             referencedRelation: "menus"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      grupos_usuarios: {
-        Row: {
-          id: string
-          grupo_id: string
-          user_id: string
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          grupo_id: string
-          user_id: string
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          grupo_id?: string
-          user_id?: string
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "grupos_usuarios_grupo_id_fkey"
-            columns: ["grupo_id"]
-            isOneToOne: false
-            referencedRelation: "grupos"
             referencedColumns: ["id"]
           },
         ]

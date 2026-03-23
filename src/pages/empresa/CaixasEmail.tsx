@@ -9,6 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Pencil } from 'lucide-react';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface CaixaEmail {
   id: string;
@@ -23,6 +24,7 @@ const isValidEmail = (email: string): boolean => {
 };
 
 export default function CaixasEmail() {
+  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [caixas, setCaixas] = useState<CaixaEmail[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -165,116 +167,120 @@ export default function CaixasEmail() {
       <div className="bg-white rounded-lg border border-border p-6 h-full flex flex-col">
         <div className="flex items-start justify-between mb-[12px]">
           <h1 className="text-xl font-bold text-[#262626]">Caixas de E-mail</h1>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar novo
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-[#262626]">Nova Caixa de E-mail</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sigla" className="text-[#262626]">Sigla *</Label>
-                  <Input
-                    id="sigla"
-                    value={siglaInput}
-                    onChange={(e) => setSiglaInput(e.target.value)}
-                    placeholder="Ex: Gmail, GBoletim, LocalWeb"
-                    className="bg-white"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAdd();
-                      }
-                    }}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="descricao" className="text-[#262626]">Descrição (E-mail) *</Label>
-                  <Input
-                    id="descricao"
-                    type="email"
-                    value={descricaoInput}
-                    onChange={(e) => setDescricaoInput(e.target.value)}
-                    placeholder="Ex: atendimento@ativalicitacoes.com.br"
-                    className="bg-white"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAdd();
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline">Cancelar</Button>
-                </DialogClose>
-                <Button onClick={handleAdd} disabled={saving} className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Adicionar
+          {canSalvar('/empresa/caixas-email') && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Adicionar novo
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-[#262626]">Nova Caixa de E-mail</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sigla" className="text-[#262626]">Sigla *</Label>
+                    <Input
+                      id="sigla"
+                      value={siglaInput}
+                      onChange={(e) => setSiglaInput(e.target.value)}
+                      placeholder="Ex: Gmail, GBoletim, LocalWeb"
+                      className="bg-white"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAdd();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="descricao" className="text-[#262626]">Descrição (E-mail) *</Label>
+                    <Input
+                      id="descricao"
+                      type="email"
+                      value={descricaoInput}
+                      onChange={(e) => setDescricaoInput(e.target.value)}
+                      placeholder="Ex: atendimento@ativalicitacoes.com.br"
+                      className="bg-white"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAdd();
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline">Cancelar</Button>
+                  </DialogClose>
+                  <Button onClick={handleAdd} disabled={saving} className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                    {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Adicionar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
 
           {/* Dialog de Edição */}
-          <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-[#262626]">Editar Caixa de E-mail</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-sigla" className="text-[#262626]">Sigla *</Label>
-                  <Input
-                    id="edit-sigla"
-                    value={editSiglaInput}
-                    onChange={(e) => setEditSiglaInput(e.target.value)}
-                    placeholder="Ex: Gmail, GBoletim, LocalWeb"
-                    className="bg-white"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleUpdate();
-                      }
-                    }}
-                  />
+          {canSalvar('/empresa/caixas-email') && (
+            <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-[#262626]">Editar Caixa de E-mail</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-sigla" className="text-[#262626]">Sigla *</Label>
+                    <Input
+                      id="edit-sigla"
+                      value={editSiglaInput}
+                      onChange={(e) => setEditSiglaInput(e.target.value)}
+                      placeholder="Ex: Gmail, GBoletim, LocalWeb"
+                      className="bg-white"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleUpdate();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-descricao" className="text-[#262626]">Descrição (E-mail) *</Label>
+                    <Input
+                      id="edit-descricao"
+                      type="email"
+                      value={editDescricaoInput}
+                      onChange={(e) => setEditDescricaoInput(e.target.value)}
+                      placeholder="Ex: atendimento@ativalicitacoes.com.br"
+                      className="bg-white"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleUpdate();
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-descricao" className="text-[#262626]">Descrição (E-mail) *</Label>
-                  <Input
-                    id="edit-descricao"
-                    type="email"
-                    value={editDescricaoInput}
-                    onChange={(e) => setEditDescricaoInput(e.target.value)}
-                    placeholder="Ex: atendimento@ativalicitacoes.com.br"
-                    className="bg-white"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleUpdate();
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline" onClick={closeEditDialog}>Cancelar</Button>
-                </DialogClose>
-                <Button onClick={handleUpdate} disabled={savingEdit} className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                  {savingEdit && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Atualizar
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline" onClick={closeEditDialog}>Cancelar</Button>
+                  </DialogClose>
+                  <Button onClick={handleUpdate} disabled={savingEdit} className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                    {savingEdit && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Atualizar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         {/* Lista de Caixas de E-mail */}
@@ -317,32 +323,34 @@ export default function CaixasEmail() {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
-                                title="Excluir"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Excluir caixa de e-mail?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Tem certeza que deseja excluir a caixa &quot;{caixa.sigla}&quot; ({caixa.descricao})? Esta ação não pode ser desfeita.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => handleDelete(caixa.id)}>
-                                  Excluir
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          {canExcluir('/empresa/caixas-email') && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
+                                  title="Excluir"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Excluir caixa de e-mail?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Tem certeza que deseja excluir a caixa &quot;{caixa.sigla}&quot; ({caixa.descricao})? Esta ação não pode ser desfeita.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => handleDelete(caixa.id)}>
+                                    Excluir
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +49,7 @@ const FLOATING_PANEL_ESTIMATED_H = 220;
 const FLOATING_PANEL_W = 440;
 
 export default function Atividades() {
+  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [ramos, setRamos] = useState<RamoAtividade[]>([]);
   const [selectedRamos, setSelectedRamos] = useState<string[]>([]);
@@ -638,6 +640,7 @@ export default function Atividades() {
               onChange={(e) => setPalavrasChavesEditValue(e.target.value)}
             />
             <div className="border-t border-border px-2 py-2 flex justify-end">
+              {canSalvar('/empresa/atividades') && (
               <Button
                 type="button"
                 size="sm"
@@ -647,6 +650,7 @@ export default function Atividades() {
               >
                 {palavrasChavesSaving ? 'Salvando...' : 'Salvar'}
               </Button>
+              )}
             </div>
           </div>
         </>

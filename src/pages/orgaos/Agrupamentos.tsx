@@ -9,6 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface GrupoOrgao {
   id: string;
@@ -17,6 +18,7 @@ interface GrupoOrgao {
 }
 
 export default function OrgaosAgrupamentos() {
+  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [grupos, setGrupos] = useState<GrupoOrgao[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -142,10 +144,11 @@ export default function OrgaosAgrupamentos() {
                     <tr key={grupo.id} className="border-b transition-colors hover:bg-muted/50">
                       <td className="p-4 align-middle py-1.5 text-sm font-medium text-[#1A1A1A]">{grupo.nome}</td>
                       <td className="p-4 align-middle py-1.5 text-right">
+                        {canExcluir('/orgaos/agrupamentos') && (
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button 
-                              variant="ghost" 
+                            <Button
+                              variant="ghost"
                               size="icon"
                               className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
                               title="Excluir"
@@ -168,6 +171,7 @@ export default function OrgaosAgrupamentos() {
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
+                        )}
                       </td>
                     </tr>
                   ))}

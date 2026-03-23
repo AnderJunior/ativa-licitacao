@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { PermissoesProvider } from "@/contexts/PermissoesContext";
 import { SidebarProvider } from "@/contexts/SidebarContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
@@ -26,6 +27,7 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
+      <PermissoesProvider>
       <SidebarProvider>
         <TooltipProvider>
           <Toaster />
@@ -34,22 +36,23 @@ const App = () => (
             <Routes>
               <Route path="/auth" element={<Auth />} />
               <Route path="/" element={<ProtectedRoute><Navigate to="/licitacoes/cadastro" replace /></ProtectedRoute>} />
-              <Route path="/licitacoes/cadastro" element={<ProtectedRoute><LicitacaoCadastro /></ProtectedRoute>} />
-              <Route path="/licitacoes/consulta" element={<ProtectedRoute><LicitacaoConsulta /></ProtectedRoute>} />
-              <Route path="/licitacoes/tipos" element={<ProtectedRoute><LicitacaoTipos /></ProtectedRoute>} />
-              <Route path="/licitacoes/marcacoes-pendentes" element={<ProtectedRoute><MarcacoesPendentes /></ProtectedRoute>} />
-              <Route path="/orgaos/cadastro" element={<ProtectedRoute><OrgaoCadastro /></ProtectedRoute>} />
-              <Route path="/orgaos/sem-ibge" element={<ProtectedRoute><OrgaosSemIBGE /></ProtectedRoute>} />
-              <Route path="/orgaos/agrupamentos" element={<ProtectedRoute><OrgaosAgrupamentos /></ProtectedRoute>} />
-              <Route path="/empresa/sites" element={<ProtectedRoute><Sites /></ProtectedRoute>} />
-              <Route path="/empresa/atividades" element={<ProtectedRoute><Atividades /></ProtectedRoute>} />
-              <Route path="/empresa/caixas-email" element={<ProtectedRoute><CaixasEmail /></ProtectedRoute>} />
-              <Route path="/empresa/permissoes" element={<ProtectedRoute><PermissoesAcesso /></ProtectedRoute>} />
+              <Route path="/licitacoes/cadastro" element={<ProtectedRoute path="/licitacoes/cadastro"><LicitacaoCadastro /></ProtectedRoute>} />
+              <Route path="/licitacoes/consulta" element={<ProtectedRoute path="/licitacoes/consulta"><LicitacaoConsulta /></ProtectedRoute>} />
+              <Route path="/licitacoes/tipos" element={<ProtectedRoute path="/licitacoes/tipos"><LicitacaoTipos /></ProtectedRoute>} />
+              <Route path="/licitacoes/marcacoes-pendentes" element={<ProtectedRoute path="/licitacoes/marcacoes-pendentes"><MarcacoesPendentes /></ProtectedRoute>} />
+              <Route path="/orgaos/cadastro" element={<ProtectedRoute path="/orgaos/cadastro"><OrgaoCadastro /></ProtectedRoute>} />
+              <Route path="/orgaos/sem-ibge" element={<ProtectedRoute path="/orgaos/sem-ibge"><OrgaosSemIBGE /></ProtectedRoute>} />
+              <Route path="/orgaos/agrupamentos" element={<ProtectedRoute path="/orgaos/agrupamentos"><OrgaosAgrupamentos /></ProtectedRoute>} />
+              <Route path="/empresa/sites" element={<ProtectedRoute path="/empresa/sites"><Sites /></ProtectedRoute>} />
+              <Route path="/empresa/atividades" element={<ProtectedRoute path="/empresa/atividades"><Atividades /></ProtectedRoute>} />
+              <Route path="/empresa/caixas-email" element={<ProtectedRoute path="/empresa/caixas-email"><CaixasEmail /></ProtectedRoute>} />
+              <Route path="/empresa/permissoes" element={<ProtectedRoute path="/empresa/permissoes"><PermissoesAcesso /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
         </TooltipProvider>
       </SidebarProvider>
+      </PermissoesProvider>
     </AuthProvider>
   </QueryClientProvider>
 );

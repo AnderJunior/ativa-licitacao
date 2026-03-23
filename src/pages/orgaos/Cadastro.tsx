@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft } from 'lucide-react';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
 import { cn } from '@/lib/utils';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface Site {
   id: string;
@@ -42,6 +43,7 @@ interface GrupoOrgao {
 export default function OrgaoCadastro() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { canSalvar, canExcluir } = usePermissoes();
   const orgaoId = searchParams.get('id');
   const isViewMode = searchParams.get('view') === 'true';
 
@@ -370,9 +372,9 @@ export default function OrgaoCadastro() {
                   : 'Cadastro de Órgãos'}
             </h1>
           </div>
-          {!isViewMode && (
-            <Button 
-              onClick={handleSave} 
+          {!isViewMode && canSalvar('/orgaos/cadastro') && (
+            <Button
+              onClick={handleSave}
               disabled={saving || !formData.nome_orgao?.trim() || !formData.cidade_ibge || !formData.uf || !formData.sites || formData.sites.length === 0}
               className="bg-[#02572E] text-white hover:bg-[#024a27] px-6"
             >

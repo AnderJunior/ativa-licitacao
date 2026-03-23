@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Loader2, Eye, Trash2, Pencil } from 'lucide-react';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface Orgao {
   id: string;
@@ -34,6 +35,7 @@ interface OrgaoCompleto extends Orgao {
 
 export default function OrgaosSemIBGE() {
   const navigate = useNavigate();
+  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [orgaos, setOrgaos] = useState<Orgao[]>([]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
@@ -219,10 +221,11 @@ export default function OrgaosSemIBGE() {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
+                          {canExcluir('/orgaos/sem-ibge') && (
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
-                              <Button 
-                                variant="ghost" 
+                              <Button
+                                variant="ghost"
                                 size="icon"
                                 className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
                                 title="Excluir"
@@ -245,6 +248,7 @@ export default function OrgaosSemIBGE() {
                               </AlertDialogFooter>
                             </AlertDialogContent>
                           </AlertDialog>
+                          )}
                         </div>
                       </td>
                     </tr>

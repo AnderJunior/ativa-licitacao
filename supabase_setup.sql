@@ -36,6 +36,21 @@ AS $$
   )
 $$;
 
+-- Função para excluir usuário completo
+CREATE OR REPLACE FUNCTION public.delete_user(_user_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  DELETE FROM public.user_permissoes WHERE user_id = _user_id;
+  DELETE FROM public.profiles WHERE user_id = _user_id;
+  DELETE FROM public.user_roles WHERE user_id = _user_id;
+  DELETE FROM auth.users WHERE id = _user_id;
+END;
+$$;
+
 -- Profiles
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -79,26 +94,6 @@ CREATE TABLE IF NOT EXISTS public.tipo_licitacoes (
 
 ALTER TABLE public.tipo_licitacoes ENABLE ROW LEVEL SECURITY;
 
--- Grupos (cargos/funções)
-CREATE TABLE IF NOT EXISTS public.grupos (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nome TEXT UNIQUE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
-);
-
-ALTER TABLE public.grupos ENABLE ROW LEVEL SECURITY;
-
--- Grupos-Usuários (vínculo N:N)
-CREATE TABLE IF NOT EXISTS public.grupos_usuarios (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    grupo_id UUID REFERENCES public.grupos(id) ON DELETE CASCADE NOT NULL,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-    UNIQUE(grupo_id, user_id)
-);
-
-ALTER TABLE public.grupos_usuarios ENABLE ROW LEVEL SECURITY;
-
 -- Menus do sistema (para permissões)
 CREATE TABLE IF NOT EXISTS public.menus (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -111,19 +106,19 @@ CREATE TABLE IF NOT EXISTS public.menus (
 
 ALTER TABLE public.menus ENABLE ROW LEVEL SECURITY;
 
--- Permissões por grupo
-CREATE TABLE IF NOT EXISTS public.grupos_permissoes (
+-- Permissões por usuário
+CREATE TABLE IF NOT EXISTS public.user_permissoes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    grupo_id UUID REFERENCES public.grupos(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
     menu_id UUID REFERENCES public.menus(id) ON DELETE CASCADE NOT NULL,
     abrir BOOLEAN NOT NULL DEFAULT false,
     salvar BOOLEAN NOT NULL DEFAULT false,
     excluir BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-    UNIQUE(grupo_id, menu_id)
+    UNIQUE(user_id, menu_id)
 );
 
-ALTER TABLE public.grupos_permissoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_permissoes ENABLE ROW LEVEL SECURITY;
 
 -- Caixas de E-mail
 CREATE TABLE IF NOT EXISTS public.caixas_email (
@@ -289,8 +284,17 @@ CREATE POLICY "Users can update own profile"
 ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = user_id);
 
 -- User Roles
-CREATE POLICY "Authenticated users can view roles" 
+CREATE POLICY "Authenticated users can view roles"
 ON public.user_roles FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can insert roles"
+ON public.user_roles FOR INSERT TO authenticated WITH CHECK (true);
+
+CREATE POLICY "Authenticated users can update roles"
+ON public.user_roles FOR UPDATE TO authenticated USING (true);
+
+CREATE POLICY "Authenticated users can delete roles"
+ON public.user_roles FOR DELETE TO authenticated USING (true);
 
 -- Tipo Licitações
 CREATE POLICY "Authenticated users can view tipo_licitacoes" 
@@ -305,57 +309,31 @@ ON public.tipo_licitacoes FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "Authenticated users can delete tipo_licitacoes" 
 ON public.tipo_licitacoes FOR DELETE TO authenticated USING (true);
 
--- Grupos
-CREATE POLICY "Authenticated users can view grupos" 
-ON public.grupos FOR SELECT TO authenticated USING (true);
-
-CREATE POLICY "Authenticated users can insert grupos" 
-ON public.grupos FOR INSERT TO authenticated WITH CHECK (true);
-
-CREATE POLICY "Authenticated users can update grupos" 
-ON public.grupos FOR UPDATE TO authenticated USING (true);
-
-CREATE POLICY "Authenticated users can delete grupos" 
-ON public.grupos FOR DELETE TO authenticated USING (true);
-
 -- Menus
-CREATE POLICY "Authenticated users can view menus" 
+CREATE POLICY "Authenticated users can view menus"
 ON public.menus FOR SELECT TO authenticated USING (true);
 
-CREATE POLICY "Authenticated users can insert menus" 
+CREATE POLICY "Authenticated users can insert menus"
 ON public.menus FOR INSERT TO authenticated WITH CHECK (true);
 
-CREATE POLICY "Authenticated users can update menus" 
+CREATE POLICY "Authenticated users can update menus"
 ON public.menus FOR UPDATE TO authenticated USING (true);
 
-CREATE POLICY "Authenticated users can delete menus" 
+CREATE POLICY "Authenticated users can delete menus"
 ON public.menus FOR DELETE TO authenticated USING (true);
 
--- Grupos Permissões
-CREATE POLICY "Authenticated users can view grupos_permissoes" 
-ON public.grupos_permissoes FOR SELECT TO authenticated USING (true);
+-- User Permissões
+CREATE POLICY "Authenticated users can view user_permissoes"
+ON public.user_permissoes FOR SELECT TO authenticated USING (true);
 
-CREATE POLICY "Authenticated users can insert grupos_permissoes" 
-ON public.grupos_permissoes FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Authenticated users can insert user_permissoes"
+ON public.user_permissoes FOR INSERT TO authenticated WITH CHECK (true);
 
-CREATE POLICY "Authenticated users can update grupos_permissoes" 
-ON public.grupos_permissoes FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "Authenticated users can update user_permissoes"
+ON public.user_permissoes FOR UPDATE TO authenticated USING (true);
 
-CREATE POLICY "Authenticated users can delete grupos_permissoes" 
-ON public.grupos_permissoes FOR DELETE TO authenticated USING (true);
-
--- Grupos Usuários
-CREATE POLICY "Authenticated users can view grupos_usuarios" 
-ON public.grupos_usuarios FOR SELECT TO authenticated USING (true);
-
-CREATE POLICY "Authenticated users can insert grupos_usuarios" 
-ON public.grupos_usuarios FOR INSERT TO authenticated WITH CHECK (true);
-
-CREATE POLICY "Authenticated users can update grupos_usuarios" 
-ON public.grupos_usuarios FOR UPDATE TO authenticated USING (true);
-
-CREATE POLICY "Authenticated users can delete grupos_usuarios" 
-ON public.grupos_usuarios FOR DELETE TO authenticated USING (true);
+CREATE POLICY "Authenticated users can delete user_permissoes"
+ON public.user_permissoes FOR DELETE TO authenticated USING (true);
 
 -- Caixas de E-mail
 CREATE POLICY "Authenticated users can view caixas_email" 
@@ -454,13 +432,6 @@ ON public.contratacoes_marcacoes FOR INSERT TO authenticated WITH CHECK (true);
 
 CREATE POLICY "Authenticated users can delete contratacoes_marcacoes" 
 ON public.contratacoes_marcacoes FOR DELETE TO authenticated USING (true);
-
--- Seed grupos padrão
-INSERT INTO public.grupos (nome) VALUES 
-    ('Administrador'),
-    ('COORDENADOR'),
-    ('DIGITADOR')
-ON CONFLICT (nome) DO NOTHING;
 
 -- Seed menus
 INSERT INTO public.menus (nome, path, ordem, parent_id) VALUES ('ATIVA', NULL, 0, NULL)

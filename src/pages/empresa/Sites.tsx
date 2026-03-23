@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Pencil, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface Site {
   id: string;
@@ -27,6 +28,7 @@ interface Orgao {
 }
 
 export default function Sites() {
+  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [sites, setSites] = useState<Site[]>([]);
   const [allSites, setAllSites] = useState<Site[]>([]);
@@ -225,88 +227,92 @@ export default function Sites() {
       <div className="bg-white rounded-lg border border-border p-6 h-full flex flex-col">
         <div className="flex items-start justify-between mb-[12px]">
           <h1 className="text-xl font-bold text-[#262626]">Sites</h1>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar novo
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-[#262626]">Novo Site</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="site" className="text-[#262626]">Site *</Label>
-                  <Input
-                    id="site"
-                    value={newSiteInput}
-                    onChange={(e) => setNewSiteInput(e.target.value)}
-                    placeholder="Ex: teste.com/oocs ou www.teste.com/oocs"
-                    className="bg-white"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAdd();
-                      }
-                    }}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    O domínio e URL completa serão gerados automaticamente
-                  </p>
-                </div>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline">Cancelar</Button>
-                </DialogClose>
-                <Button onClick={handleAdd} disabled={saving} className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Adicionar
+          {canSalvar('/empresa/sites') && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Adicionar novo
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-[#262626]">Novo Site</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="site" className="text-[#262626]">Site *</Label>
+                    <Input
+                      id="site"
+                      value={newSiteInput}
+                      onChange={(e) => setNewSiteInput(e.target.value)}
+                      placeholder="Ex: teste.com/oocs ou www.teste.com/oocs"
+                      className="bg-white"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAdd();
+                        }
+                      }}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      O domínio e URL completa serão gerados automaticamente
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline">Cancelar</Button>
+                  </DialogClose>
+                  <Button onClick={handleAdd} disabled={saving} className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                    {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Adicionar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
 
           {/* Dialog de Edição */}
-          <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-[#262626]">Editar Site</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-site" className="text-[#262626]">Site *</Label>
-                  <Input
-                    id="edit-site"
-                    value={editSiteInput}
-                    onChange={(e) => setEditSiteInput(e.target.value)}
-                    placeholder="Ex: teste.com/oocs ou www.teste.com/oocs"
-                    className="bg-white"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleUpdate();
-                      }
-                    }}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    O domínio e URL completa serão atualizados automaticamente
-                  </p>
+          {canSalvar('/empresa/sites') && (
+            <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-[#262626]">Editar Site</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-site" className="text-[#262626]">Site *</Label>
+                    <Input
+                      id="edit-site"
+                      value={editSiteInput}
+                      onChange={(e) => setEditSiteInput(e.target.value)}
+                      placeholder="Ex: teste.com/oocs ou www.teste.com/oocs"
+                      className="bg-white"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleUpdate();
+                        }
+                      }}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      O domínio e URL completa serão atualizados automaticamente
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline" onClick={closeEditDialog}>Cancelar</Button>
-                </DialogClose>
-                <Button onClick={handleUpdate} disabled={savingEdit} className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                  {savingEdit && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Atualizar
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline" onClick={closeEditDialog}>Cancelar</Button>
+                  </DialogClose>
+                  <Button onClick={handleUpdate} disabled={savingEdit} className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                    {savingEdit && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Atualizar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         {/* Filtros */}
@@ -455,32 +461,34 @@ export default function Sites() {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
-                                title="Excluir"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Excluir site?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Tem certeza que deseja excluir o site "{site.dominio}"? Esta ação não pode ser desfeita.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => handleDelete(site.id)}>
-                                  Excluir
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          {canExcluir('/empresa/sites') && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
+                                  title="Excluir"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Excluir site?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Tem certeza que deseja excluir o site "{site.dominio}"? Esta ação não pode ser desfeita.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => handleDelete(site.id)}>
+                                    Excluir
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                         </div>
                       </td>
                     </tr>

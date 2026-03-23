@@ -9,6 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface TipoLicitacao {
   id: string;
@@ -18,6 +19,7 @@ interface TipoLicitacao {
 }
 
 export default function LicitacaoTipos() {
+  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [tipos, setTipos] = useState<TipoLicitacao[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -86,50 +88,52 @@ export default function LicitacaoTipos() {
       <div className="bg-white rounded-lg border border-border p-6 h-full flex flex-col">
         <div className="flex items-start justify-between mb-[12px]">
           <h1 className="text-xl font-bold text-[#262626]">Tipos de Licitação</h1>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar novo
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-[#262626]">Novo Tipo de Licitação</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sigla" className="text-[#262626]">Sigla *</Label>
-                  <Input
-                    id="sigla"
-                    value={newSigla}
-                    onChange={(e) => setNewSigla(e.target.value)}
-                    placeholder="Ex: PE, CC, TP"
-                    className="bg-white"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="descricao" className="text-[#262626]">Descrição</Label>
-                  <Input
-                    id="descricao"
-                    value={newDescricao}
-                    onChange={(e) => setNewDescricao(e.target.value)}
-                    placeholder="Ex: Pregão Eletrônico"
-                    className="bg-white"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline">Cancelar</Button>
-                </DialogClose>
-                <Button onClick={handleAdd} disabled={saving} className="bg-[#02572E] text-white hover:bg-[#024a27]">
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Adicionar
+          {canSalvar('/licitacoes/tipos') && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Adicionar novo
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-[#262626]">Novo Tipo de Licitação</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sigla" className="text-[#262626]">Sigla *</Label>
+                    <Input
+                      id="sigla"
+                      value={newSigla}
+                      onChange={(e) => setNewSigla(e.target.value)}
+                      placeholder="Ex: PE, CC, TP"
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="descricao" className="text-[#262626]">Descrição</Label>
+                    <Input
+                      id="descricao"
+                      value={newDescricao}
+                      onChange={(e) => setNewDescricao(e.target.value)}
+                      placeholder="Ex: Pregão Eletrônico"
+                      className="bg-white"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline">Cancelar</Button>
+                  </DialogClose>
+                  <Button onClick={handleAdd} disabled={saving} className="bg-[#02572E] text-white hover:bg-[#024a27]">
+                    {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Adicionar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         {/* Lista de Tipos */}
@@ -158,32 +162,34 @@ export default function LicitacaoTipos() {
                         {tipo.descricao ? `${tipo.sigla} - ${tipo.descricao}` : tipo.sigla}
                       </td>
                       <td className="p-4 align-middle py-1.5 text-right">
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
-                              title="Excluir"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Excluir tipo?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Tem certeza que deseja excluir o tipo "{tipo.sigla}"? Esta ação não pode ser desfeita.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(tipo.id)}>
-                                Excluir
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                        {canExcluir('/licitacoes/tipos') && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
+                                title="Excluir"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Excluir tipo?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Tem certeza que deseja excluir o tipo "{tipo.sigla}"? Esta ação não pode ser desfeita.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => handleDelete(tipo.id)}>
+                                  Excluir
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
                       </td>
                     </tr>
                   ))}

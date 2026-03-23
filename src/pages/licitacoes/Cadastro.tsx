@@ -13,6 +13,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 import { toast } from 'sonner';
 import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -88,6 +89,7 @@ export default function LicitacaoCadastro() {
   const navigate = useNavigate();
   const contratacaoId = searchParams.get('id');
   const { user } = useAuth();
+  const { canSalvar, canExcluir } = usePermissoes();
 
   const [loading, setLoading] = useState(false);
   const [ordemAtual, setOrdemAtual] = useState<number | null>(null);
@@ -2396,9 +2398,10 @@ export default function LicitacaoCadastro() {
                 <FileText className="w-4 h-4 mr-2" />
                 Novo
               </Button>
-              <Button 
-                variant="destructive" 
-                size="sm" 
+              {canExcluir('/licitacoes/cadastro') && (
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={() => setDeleteDialogOpen(true)}
                 disabled={!contratacaoId || !formData.num_ativa || formData.num_ativa.trim() === ''}
                 className="bg-red-500 hover:bg-red-600 text-white px-4 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2406,15 +2409,17 @@ export default function LicitacaoCadastro() {
                 <Trash2 className="w-4 h-4 mr-2" />
                 Excluir
               </Button>
-              <Button 
-                variant="default" 
-                size="sm" 
-                onClick={handleSave} 
+              )}
+              {canSalvar('/licitacoes/cadastro') && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleSave}
                 disabled={
-                  saving || 
-                  !formData.modalidade || 
+                  saving ||
+                  !formData.modalidade ||
                   !tipos.find(t => t.id === formData.modalidade) ||
-                  !formData.orgao_pncp || 
+                  !formData.orgao_pncp ||
                   !orgaos.find(o => o.nome_orgao === formData.orgao_pncp || o.id === formData.orgao_pncp) ||
                   (!formData.sequencial_compra && !formData.ano_compra)
                 }
@@ -2423,6 +2428,7 @@ export default function LicitacaoCadastro() {
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 Salvar
               </Button>
+              )}
               <Button 
                 variant="secondary" 
                 size="icon" 
@@ -3564,6 +3570,7 @@ export default function LicitacaoCadastro() {
               onChange={(e) => setPalavrasChavesEditValue(e.target.value)}
             />
             <div className="border-t border-border px-2 py-2 flex justify-end">
+              {canSalvar('/licitacoes/cadastro') && (
               <Button
                 type="button"
                 size="sm"
@@ -3573,6 +3580,7 @@ export default function LicitacaoCadastro() {
               >
                 {palavrasChavesSaving ? 'Salvando...' : 'Salvar'}
               </Button>
+              )}
             </div>
           </div>
         </>

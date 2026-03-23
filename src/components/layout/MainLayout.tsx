@@ -4,6 +4,7 @@ import { Breadcrumb } from './Breadcrumb';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface MainLayoutProps {
@@ -40,14 +41,11 @@ export function MainLayout({ children }: MainLayoutProps) {
           <div className="flex items-center gap-2.5">
             <button
               onClick={signOut}
-              className="h-5 w-5 p-0 text-red-600 hover:text-red-700 transition-colors flex items-center justify-center"
+              className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
               aria-label="Sair"
+              title="Sair"
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                <path d="M5 4L9 7L5 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                <path d="M9 4H12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
+              <LogOut className="w-4 h-4" />
             </button>
             <span className="text-sm text-gray-700 font-normal leading-none">
               {userName}

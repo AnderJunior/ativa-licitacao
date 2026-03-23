@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/contexts/SidebarContext';
+import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface SubMenuItem {
   label: string;
@@ -70,11 +71,20 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isMinimized, toggleSidebar } = useSidebar();
+  const { canAbrir } = usePermissoes();
+
+  // Filtrar menus por permissão
+  const filteredMenuItems = menuItems
+    .map(item => ({
+      ...item,
+      children: item.children.filter(child => canAbrir(child.path)),
+    }))
+    .filter(item => item.children.length > 0);
 
   // Determine which menus should be open based on current path
   const getInitialOpenMenus = () => {
     const openMenus: string[] = [];
-    menuItems.forEach(item => {
+    filteredMenuItems.forEach(item => {
       if (item.children.some(child => location.pathname.startsWith(child.path.split('?')[0]))) {
         openMenus.push(item.label);
       }
@@ -87,13 +97,13 @@ export function Sidebar() {
   // Update open menus when location changes
   useEffect(() => {
     const newOpenMenus: string[] = [];
-    menuItems.forEach(item => {
+    filteredMenuItems.forEach(item => {
       if (item.children.some(child => location.pathname.startsWith(child.path.split('?')[0]))) {
         newOpenMenus.push(item.label);
       }
     });
     setOpenMenus(newOpenMenus);
-  }, [location.pathname]);
+  }, [location.pathname, canAbrir]);
 
   const toggleMenu = (label: string) => {
     setOpenMenus(prev => 
@@ -143,7 +153,7 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto">
-          {menuItems.map((item) => {
+          {filteredMenuItems.map((item) => {
             const isOpen = openMenus.includes(item.label);
             const hasActiveChild = isParentActive(item.children);
             
