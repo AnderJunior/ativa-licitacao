@@ -31,16 +31,21 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
   const [permissoes, setPermissoes] = useState<PermissaoRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!user) {
       setIsAdmin(false);
       setMenus([]);
       setPermissoes([]);
       setLoading(false);
+      setLoadedUserId(null);
       return;
     }
+    // Não recarregar se já carregou para este mesmo usuário
+    if (loadedUserId === user.id) return;
     loadPermissoes(user.id);
-  }, [user]);
+  }, [user?.id]);
 
   const loadPermissoes = async (userId: string) => {
     setLoading(true);
@@ -58,6 +63,7 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
     } catch {
       // fallback: sem permissões
     }
+    setLoadedUserId(userId);
     setLoading(false);
   };
 

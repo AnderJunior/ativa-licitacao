@@ -183,8 +183,6 @@ export default function OrgaosSemIBGE() {
                     <th className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white">Orgão</th>
                     <th className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white">UASG NET</th>
                     <th className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white">UASG MG</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white">Endereço</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white">Telefone</th>
                     <th className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] text-right bg-white">Ações</th>
                   </tr>
                 </thead>
@@ -199,8 +197,6 @@ export default function OrgaosSemIBGE() {
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{orgao.nome_orgao}</td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{orgao.compras_net || '-'}</td>
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{orgao.compras_mg || '-'}</td>
-                      <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{orgao.endereco || '-'}</td>
-                      <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{orgao.telefone || '-'}</td>
                       <td className="p-4 align-middle py-1.5 text-right">
                         <div className="flex gap-1 justify-end">
                           <Button

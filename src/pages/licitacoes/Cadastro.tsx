@@ -1382,8 +1382,10 @@ export default function LicitacaoCadastro() {
       // Manual: usa o conteúdo direto do banco (pode estar em conteudo ou textos_cadastro_manual)
       conteudoFormatado = licitacao.textos_cadastro_manual || licitacao.conteudo || '';
     } else {
-      // PNCP: formata no padrão
-      conteudoFormatado = formatarConteudoLicitacao(licitacao);
+      // PNCP: usa conteúdo salvo se já formatado, senão formata a partir dos campos
+      conteudoFormatado = licitacao.conteudo?.includes('Local:')
+        ? licitacao.conteudo
+        : formatarConteudoLicitacao(licitacao);
     }
 
     // Extrai o número do titulo (ex: "Edital nº 03" → "03") e combina com ano_compra
@@ -1853,12 +1855,12 @@ export default function LicitacaoCadastro() {
     try {
       const { error } = await supabase
         .from('contratacoes')
-        .delete()
+        .update({ excluido: true })
         .eq('id', contratacaoId);
       if (error) throw error;
       toast.success('Licitação excluída!');
       setDeleteDialogOpen(false);
-      window.history.back();
+      handleNovo();
     } catch (error: any) {
       toast.error('Erro ao excluir: ' + error.message);
       setDeleteDialogOpen(false);
@@ -1911,7 +1913,8 @@ export default function LicitacaoCadastro() {
     try {
       let query = supabase
         .from('contratacoes')
-        .select('id, ordem');
+        .select('id, ordem')
+        .or('excluido.is.null,excluido.eq.false');
 
       if (ordemAtual) {
         // Tem registro aberto: busca o anterior (ordem menor mais próxima)
@@ -1945,7 +1948,8 @@ export default function LicitacaoCadastro() {
     try {
       let query = supabase
         .from('contratacoes')
-        .select('id, ordem');
+        .select('id, ordem')
+        .or('excluido.is.null,excluido.eq.false');
 
       if (ordemAtual) {
         // Tem registro aberto: busca o próximo (ordem maior mais próxima)

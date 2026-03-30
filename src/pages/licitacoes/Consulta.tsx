@@ -1,15 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, Eye, Filter, X, Download, ChevronsUpDown } from 'lucide-react';
+import { Loader2, Eye, Filter, X, Download, ChevronsUpDown, Search } from 'lucide-react';
+import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
+import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { useResizableColumns } from '@/hooks/use-resizable-columns';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +39,11 @@ interface Contratacao {
   n_relatorio?: string | null;
   cliente?: string | null;
   created_at?: string;
+  revisao?: boolean | null;
+  lida?: boolean | null;
+  cadastrado_por?: string | null;
+  cadastrado_por_nome?: string | null;
+  dt_envio?: string | null;
   tipo_licitacao?: {
     sigla: string | null;
     descricao: string | null;
@@ -66,10 +76,23 @@ const getRegiaoFromUF = (uf: string | null): string => {
   return UF_PARA_REGIAO[uf] || '-';
 };
 
+const getCnpj = (c: any): string | null => {
+  if (c.cnpj) return c.cnpj;
+  if (c.cd_pn) {
+    const match = c.cd_pn.match(/^(\d{14})/);
+    if (match) return match[1];
+  }
+  if (c.num_licitacao) {
+    const match = c.num_licitacao.match(/^(\d{14})/);
+    if (match) return match[1];
+  }
+  return null;
+};
+
 const COLUNAS_POR_LAYOUT: Record<string, string[]> = {
   resumido: ['Região', 'Estado', 'Quantidade'],
   detalhado: ['Região', 'UF', 'NumPncp', 'NumAtiva', 'Alterado', 'Titulo', 'Municipio', 'Unidade', 'UnCod', 'OrgaoPNCP', 'CNPJ', 'Modalidade', 'Conteudo', 'Complemento', 'DtCriacao', 'DtImportacao', 'DtPublicacao', 'DtAtualizacao', 'DtVigencia', 'DtVinculoAtiva', 'Esfera', 'Poder', 'cd_pn', 'Ações'],
-  unidades: ['UF', 'Esfera', 'Poder', 'OrgaoPNCP', 'CNPJ', 'Unidade', 'UnCod', 'Municipio', 'Ações'],
+  unidades: ['UF', 'Esfera', 'Poder', 'OrgaoPNCP', 'CNPJ', 'Unidade', 'UnCod', 'Municipio', 'OrgaoAtiva', 'Ações'],
   modalidade: ['Id', 'ModalidadePncp', 'TipoLicitacaoAtiva', 'Ações'],
 };
 
@@ -78,33 +101,40 @@ const LARGURA_COLUNA: Record<string, number> = {
   Titulo: 200, Municipio: 120, Unidade: 120, UnCod: 80, OrgaoPNCP: 180, CNPJ: 140, Modalidade: 100,
   Conteudo: 250, Complemento: 120, DtCriacao: 95, DtImportacao: 95, DtPublicacao: 95, DtAtualizacao: 95,
   DtVigencia: 95, DtVinculoAtiva: 95, Esfera: 90, Poder: 90, cd_pn: 100, Ações: 60,
-  Id: 80, ModalidadePncp: 120, TipoLicitacaoAtiva: 150,
+  Id: 80, ModalidadePncp: 120, TipoLicitacaoAtiva: 150, OrgaoAtiva: 180,
 };
 
 export default function LicitacaoConsulta() {
   const navigate = useNavigate();
+  // Filtros - carrega do sessionStorage para persistir entre troca de aba do navegador
+  const savedFilters = useMemo(() => {
+    try {
+      const saved = sessionStorage.getItem('consulta-filtros');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  }, []);
+
   const [loading, setLoading] = useState(true);
   const [contratacoes, setContratacoes] = useState<Contratacao[]>([]);
-  const [activeTab, setActiveTab] = useState('todas');
+  const [activeTab, setActiveTab] = useState(savedFilters?.activeTab || 'todas');
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
-
-  // Filtros
-  const [filtroUF, setFiltroUF] = useState('');
-  const [filtroOrgao, setFiltroOrgao] = useState('');
-  const [filtroDataInicio, setFiltroDataInicio] = useState('');
-  const [filtroDataFim, setFiltroDataFim] = useState('');
-  const [filtroMunicipio, setFiltroMunicipio] = useState('');
-  const [filtroEsfera, setFiltroEsfera] = useState('');
-  const [filtroPoder, setFiltroPoder] = useState('');
-  const [filtroModalidade, setFiltroModalidade] = useState('');
-  const [filtroSituacao, setFiltroSituacao] = useState('');
-  const [filtroNumAtiva, setFiltroNumAtiva] = useState('');
-  const [filtroNPncp, setFiltroNPncp] = useState('');
-  const [filtroPeriodoBase, setFiltroPeriodoBase] = useState<'dt_atualizacao' | 'dt_publicacao' | 'dt_criacao' | 'dt_importacao' | 'dt_vigencia_ini' | 'dt_vinculo_ativa'>('dt_atualizacao');
-  const [filtroSituacaoRadio, setFiltroSituacaoRadio] = useState<'pendentes' | 'vinculadas' | 'excluidas' | 'todas'>('todas');
-  const [filtroLayout, setFiltroLayout] = useState<'resumido' | 'detalhado' | 'unidades' | 'modalidade'>('resumido');
-  const [selectedUFs, setSelectedUFs] = useState<Set<string>>(new Set());
+  const [filtroUF, setFiltroUF] = useState(savedFilters?.filtroUF || '');
+  const [filtroOrgao, setFiltroOrgao] = useState(savedFilters?.filtroOrgao || '');
+  const [filtroDataInicio, setFiltroDataInicio] = useState(savedFilters?.filtroDataInicio || '');
+  const [filtroDataFim, setFiltroDataFim] = useState(savedFilters?.filtroDataFim || '');
+  const [filtroMunicipio, setFiltroMunicipio] = useState(savedFilters?.filtroMunicipio || '');
+  const [filtroEsfera, setFiltroEsfera] = useState(savedFilters?.filtroEsfera || '');
+  const [filtroPoder, setFiltroPoder] = useState(savedFilters?.filtroPoder || '');
+  const [filtroModalidade, setFiltroModalidade] = useState(savedFilters?.filtroModalidade || '');
+  const [filtroSituacao, setFiltroSituacao] = useState(savedFilters?.filtroSituacao || '');
+  const [filtroNumAtiva, setFiltroNumAtiva] = useState(savedFilters?.filtroNumAtiva || '');
+  const [filtroNPncp, setFiltroNPncp] = useState(savedFilters?.filtroNPncp || '');
+  const [filtroPeriodoBase, setFiltroPeriodoBase] = useState<'dt_atualizacao' | 'dt_publicacao' | 'dt_criacao' | 'dt_importacao' | 'dt_vigencia_ini' | 'dt_vinculo_ativa'>(savedFilters?.filtroPeriodoBase || 'dt_atualizacao');
+  const [filtroSituacaoRadio, setFiltroSituacaoRadio] = useState<'pendentes' | 'vinculadas' | 'excluidas' | 'todas'>(savedFilters?.filtroSituacaoRadio || 'todas');
+  const [filtroLayout, setFiltroLayout] = useState<'resumido' | 'detalhado' | 'unidades' | 'modalidade'>(savedFilters?.filtroLayout || 'resumido');
+  const [selectedUFs, setSelectedUFs] = useState<Set<string>>(new Set(savedFilters?.selectedUFs || []));
   const [tiposLicitacao, setTiposLicitacao] = useState<{ id: string; sigla: string; descricao: string | null }[]>([]);
+  const [filtroUFConferir, setFiltroUFConferir] = useState(savedFilters?.filtroUFConferir || '');
 
   // Estados dos dropdowns com pesquisa
   const [esferaPopupOpen, setEsferaPopupOpen] = useState(false);
@@ -115,6 +145,158 @@ export default function LicitacaoConsulta() {
   const [poderSearchTerm, setPoderSearchTerm] = useState('');
   const [modalidadeSearchTerm, setModalidadeSearchTerm] = useState('');
   const [situacaoSearchTerm, setSituacaoSearchTerm] = useState('');
+
+  // Salva filtros no sessionStorage para persistir entre troca de aba do navegador
+  useEffect(() => {
+    sessionStorage.setItem('consulta-filtros', JSON.stringify({
+      activeTab, filtroUF, filtroOrgao, filtroDataInicio, filtroDataFim,
+      filtroMunicipio, filtroEsfera, filtroPoder, filtroModalidade, filtroSituacao,
+      filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio,
+      filtroLayout, selectedUFs: Array.from(selectedUFs), filtroUFConferir,
+    }));
+  }, [activeTab, filtroUF, filtroOrgao, filtroDataInicio, filtroDataFim,
+    filtroMunicipio, filtroEsfera, filtroPoder, filtroModalidade, filtroSituacao,
+    filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio,
+    filtroLayout, selectedUFs]);
+
+  // Estado do painel de detalhes da aba Conferir
+  const [selectedConferir, setSelectedConferir] = useState<Contratacao | null>(null);
+  const [conferirRamos, setConferirRamos] = useState<string[]>([]);
+  const [loadingConferirRamos, setLoadingConferirRamos] = useState(false);
+  const [selecaoMultipla, setSelecaoMultipla] = useState(false);
+  const [selectedConferirIds, setSelectedConferirIds] = useState<Set<string>>(new Set());
+
+  // Estado da aba Licitações Enviadas
+  const [selectedEnviada, setSelectedEnviada] = useState<Contratacao | null>(null);
+  const [selecaoMultiplaEnviadas, setSelecaoMultiplaEnviadas] = useState(false);
+  const [selectedEnviadasIds, setSelectedEnviadasIds] = useState<Set<string>>(new Set());
+  const [filtroEnviadasOpen, setFiltroEnviadasOpen] = useState(false);
+  const [filtroEnviadasNControle, setFiltroEnviadasNControle] = useState('');
+  const [filtroEnviadasDataInicio, setFiltroEnviadasDataInicio] = useState('');
+  const [filtroEnviadasDataFim, setFiltroEnviadasDataFim] = useState('');
+  const [filtroEnviadasUF, setFiltroEnviadasUF] = useState('');
+  const [filtroEnviadasTipo, setFiltroEnviadasTipo] = useState('');
+  const [filtroEnviadasTipoLabel, setFiltroEnviadasTipoLabel] = useState('');
+  const [filtroEnviadasOrgao, setFiltroEnviadasOrgao] = useState('');
+  const [buscarTipoEnviadasOpen, setBuscarTipoEnviadasOpen] = useState(false);
+  const [buscarOrgaoEnviadasOpen, setBuscarOrgaoEnviadasOpen] = useState(false);
+
+  const [enviadasRamos, setEnviadasRamos] = useState<string[]>([]);
+  const [loadingEnviadasRamos, setLoadingEnviadasRamos] = useState(false);
+
+  // Estado da aba Unidades (layout unidades)
+  const [selectedUnidade, setSelectedUnidade] = useState<Contratacao | null>(null);
+  const [vinculosMap, setVinculosMap] = useState<Record<string, { orgao_id: string; orgao_nome: string }>>({});
+  const [vinculoOrgaoId, setVinculoOrgaoId] = useState('');
+  const [vinculoOrgaoNome, setVinculoOrgaoNome] = useState('');
+  const [buscarOrgaoUnidadeOpen, setBuscarOrgaoUnidadeOpen] = useState(false);
+  const [viewOrgaoDialogOpen, setViewOrgaoDialogOpen] = useState(false);
+  const [orgaoViewData, setOrgaoViewData] = useState<any>(null);
+  const [loadingOrgaoView, setLoadingOrgaoView] = useState(false);
+
+  const toggleSelecaoEnviada = (c: Contratacao) => {
+    setSelectedEnviadasIds(prev => {
+      const next = new Set(prev);
+      if (next.has(c.id)) { next.delete(c.id); } else { next.add(c.id); }
+      return next;
+    });
+  };
+
+  const handleSelectEnviada = async (c: Contratacao) => {
+    setSelectedEnviada(c);
+    setLoadingEnviadasRamos(true);
+    try {
+      const { data } = await supabase
+        .from('contratacoes_marcacoes')
+        .select('ramo:ramo_id(nome)')
+        .eq('contratacao_id', c.id);
+      setEnviadasRamos((data || []).map((m: any) => m.ramo?.nome).filter(Boolean));
+    } catch {
+      setEnviadasRamos([]);
+    } finally {
+      setLoadingEnviadasRamos(false);
+    }
+  };
+
+  const toggleSelecaoItem = (c: Contratacao) => {
+    setSelectedConferirIds(prev => {
+      const next = new Set(prev);
+      if (next.has(c.id)) { next.delete(c.id); } else { next.add(c.id); }
+      return next;
+    });
+  };
+
+  const handleSelectConferir = async (c: Contratacao) => {
+    setSelectedConferir(c);
+    setLoadingConferirRamos(true);
+    try {
+      const { data } = await supabase
+        .from('contratacoes_marcacoes')
+        .select('ramo:ramo_id(nome)')
+        .eq('contratacao_id', c.id);
+      setConferirRamos((data || []).map((m: any) => m.ramo?.nome).filter(Boolean));
+    } catch {
+      setConferirRamos([]);
+    } finally {
+      setLoadingConferirRamos(false);
+    }
+  };
+
+  const loadVinculos = useCallback(async () => {
+    try {
+      const { data } = await supabase.from('orgaos_vinculados').select('cnpj, orgao_id, orgao_nome');
+      const map: Record<string, { orgao_id: string; orgao_nome: string }> = {};
+      (data || []).forEach((v: any) => { if (v.cnpj) map[v.cnpj] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome }; });
+      setVinculosMap(map);
+    } catch { /* silencia */ }
+  }, []);
+
+  const handleSelectUnidade = (c: Contratacao) => {
+    setSelectedUnidade(c);
+    const cnpj = getCnpj(c);
+    const vinculo = cnpj ? vinculosMap[cnpj] : null;
+    setVinculoOrgaoId(vinculo?.orgao_id || '');
+    setVinculoOrgaoNome(vinculo?.orgao_nome || '');
+  };
+
+  const handleAssociarOrgao = async () => {
+    if (!selectedUnidade || !vinculoOrgaoId) { toast.error('Selecione um órgão para associar.'); return; }
+    const cnpj = getCnpj(selectedUnidade);
+    if (!cnpj) { toast.error('Unidade sem CNPJ — não é possível associar.'); return; }
+    const { error } = await supabase
+      .from('orgaos_vinculados')
+      .upsert({ cnpj, orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome }, { onConflict: 'cnpj' });
+    if (error) { toast.error('Erro ao associar: ' + error.message); return; }
+    setVinculosMap(prev => ({ ...prev, [cnpj]: { orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome } }));
+    toast.success('Órgão associado com sucesso!');
+  };
+
+  const handleViewOrgao = async (orgaoId: string) => {
+    setLoadingOrgaoView(true);
+    setViewOrgaoDialogOpen(true);
+    const { data, error } = await supabase.from('orgaos').select('*').eq('id', orgaoId).maybeSingle();
+    if (error || !data) {
+      toast.error('Erro ao carregar dados do órgão');
+      setViewOrgaoDialogOpen(false);
+      setLoadingOrgaoView(false);
+      return;
+    }
+    let cidadeNome = null;
+    if (data.uf && data.cidade_ibge) {
+      try {
+        const response = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${data.cidade_ibge}`);
+        if (response.ok) { const municipio = await response.json(); cidadeNome = municipio?.nome || null; }
+      } catch (e) { console.error('Erro ao buscar nome da cidade:', e); }
+    }
+    let grupoNome = null;
+    const { data: vinculos } = await supabase.from('orgaos_grupos').select('grupo_id').eq('orgao_id', orgaoId).limit(1);
+    if (vinculos && vinculos.length > 0) {
+      const { data: grupoData } = await supabase.from('grupo_de_orgaos').select('nome').eq('id', vinculos[0].grupo_id).maybeSingle();
+      if (grupoData) grupoNome = grupoData.nome;
+    }
+    setOrgaoViewData({ ...data, cidade_nome: cidadeNome, grupo_nome: grupoNome });
+    setLoadingOrgaoView(false);
+  };
 
   const colunasAtuais = COLUNAS_POR_LAYOUT[filtroLayout] || COLUNAS_POR_LAYOUT.resumido;
   const { getWidth, setWidth, handleResizeStart, resizingColumn } = useResizableColumns({
@@ -158,12 +340,20 @@ export default function LicitacaoConsulta() {
 
   useEffect(() => {
     loadContratacoes();
-  }, [activeTab]);
+  }, [activeTab, filtroUFConferir]);
 
   // Fecha o modal de filtros ao trocar para aba Conferir (filtros só na Lista Completa)
   useEffect(() => {
     if (activeTab !== 'todas') setFilterPopoverOpen(false);
   }, [activeTab]);
+
+  // Carrega vínculos de órgãos ao entrar no layout unidades
+  useEffect(() => {
+    if (activeTab === 'todas' && filtroLayout === 'unidades') {
+      loadVinculos();
+      setSelectedUnidade(null);
+    }
+  }, [activeTab, filtroLayout, loadVinculos]);
 
   useEffect(() => {
     const loadTipos = async () => {
@@ -212,12 +402,73 @@ export default function LicitacaoConsulta() {
           .select('contratacao_id');
         const idsComMarcacoes = comMarcacoes?.map(m => m.contratacao_id) || [];
 
-        query = query
+        // Busca contratações da aba conferir
+        const { data: conferirRaw, error: conferirError } = await supabase
+          .from('contratacoes')
+          .select('*, tipo_licitacao:descricao_modalidade(sigla, descricao)')
           .eq('cadastrado', true)
           .eq('enviada', false)
-          .in('id', idsComMarcacoes.length > 0 ? idsComMarcacoes : ['00000000-0000-0000-0000-000000000000']);
+          .or('excluido.is.null,excluido.eq.false')
+          .in('id', idsComMarcacoes.length > 0 ? idsComMarcacoes : ['00000000-0000-0000-0000-000000000000'])
+          .order('dt_publicacao', { ascending: false });
+
+        if (conferirError) throw conferirError;
+
+        // Busca nomes dos usuários que cadastraram
+        const userIds = [...new Set((conferirRaw || []).map((c: any) => c.cadastrado_por).filter(Boolean))];
+        let profilesMap: Record<string, string> = {};
+        if (userIds.length > 0) {
+          const { data: profilesData } = await supabase
+            .from('profiles')
+            .select('user_id, full_name')
+            .in('user_id', userIds);
+          (profilesData || []).forEach((p: any) => { profilesMap[p.user_id] = p.full_name; });
+        }
+
+        const conferirData = (conferirRaw || []).map((c: any) => ({
+          ...c,
+          cadastrado_por_nome: c.cadastrado_por ? (profilesMap[c.cadastrado_por] || null) : null,
+        }));
+
+        let resultado = conferirData;
+        if (filtroUFConferir) resultado = resultado.filter((c: any) => c.uf === filtroUFConferir);
+
+        setContratacoes(resultado);
+        setLoading(false);
+        return;
       } else if (activeTab === 'enviadas') {
-        query = query.eq('enviada', true);
+        const { data: enviadasRaw, error: enviadasError } = await supabase
+          .from('contratacoes')
+          .select('*, tipo_licitacao:descricao_modalidade(sigla, descricao)')
+          .eq('enviada', true)
+          .or('excluido.is.null,excluido.eq.false')
+          .order('dt_envio', { ascending: false, nullsFirst: false });
+
+        if (enviadasError) throw enviadasError;
+
+        // Busca nomes dos usuários
+        const userIdsEnv = [...new Set((enviadasRaw || []).map((c: any) => c.cadastrado_por).filter(Boolean))];
+        let profilesMapEnv: Record<string, string> = {};
+        if (userIdsEnv.length > 0) {
+          const { data: profData } = await supabase.from('profiles').select('user_id, full_name').in('user_id', userIdsEnv);
+          (profData || []).forEach((p: any) => { profilesMapEnv[p.user_id] = p.full_name; });
+        }
+
+        let enviadasData = (enviadasRaw || []).map((c: any) => ({
+          ...c,
+          cadastrado_por_nome: c.cadastrado_por ? (profilesMapEnv[c.cadastrado_por] || null) : null,
+        }));
+
+        if (filtroEnviadasNControle) enviadasData = enviadasData.filter((c: any) => c.num_ativa?.toLowerCase().includes(filtroEnviadasNControle.toLowerCase()));
+        if (filtroEnviadasDataInicio) enviadasData = enviadasData.filter((c: any) => c.dt_envio && c.dt_envio >= filtroEnviadasDataInicio);
+        if (filtroEnviadasDataFim) enviadasData = enviadasData.filter((c: any) => c.dt_envio && c.dt_envio <= filtroEnviadasDataFim);
+        if (filtroEnviadasUF) enviadasData = enviadasData.filter((c: any) => c.uf === filtroEnviadasUF);
+        if (filtroEnviadasTipo) enviadasData = enviadasData.filter((c: any) => c.descricao_modalidade === filtroEnviadasTipo);
+        if (filtroEnviadasOrgao) enviadasData = enviadasData.filter((c: any) => c.orgao_pncp?.toLowerCase().includes(filtroEnviadasOrgao.toLowerCase()));
+
+        setContratacoes(enviadasData);
+        setLoading(false);
+        return;
       }
 
       // Filtros adicionais
@@ -236,11 +487,14 @@ export default function LicitacaoConsulta() {
       // Situação (pendentes/vinculadas/excluídas) - apenas na Lista Completa
       if (activeTab === 'todas') {
         if (filtroSituacaoRadio === 'pendentes') {
-          query = query.eq('cadastrado', false).eq('enviada', false);
+          query = query.eq('cadastrado', false).or('excluido.is.null,excluido.eq.false');
         } else if (filtroSituacaoRadio === 'vinculadas') {
-          query = query.eq('cadastrado', true);
+          query = query.eq('cadastrado', true).or('excluido.is.null,excluido.eq.false');
         } else if (filtroSituacaoRadio === 'excluidas') {
-          query = query.eq('enviada', true);
+          query = query.eq('excluido', true);
+        } else {
+          // Todas: não mostra excluídas por padrão
+          query = query.or('excluido.is.null,excluido.eq.false');
         }
       }
 
@@ -316,6 +570,8 @@ export default function LicitacaoConsulta() {
     setPoderSearchTerm('');
     setModalidadeSearchTerm('');
     setSituacaoSearchTerm('');
+    setFiltroUFConferir('');
+    sessionStorage.removeItem('consulta-filtros');
   };
 
   const applyFilters = () => {
@@ -417,23 +673,341 @@ export default function LicitacaoConsulta() {
               </button>
               <button
                 type="button"
-                /*onClick={() => setActiveTab('enviadas')}*/
+                onClick={() => setActiveTab('enviadas')}
                 className={cn(
-                  "px-4 py-2 rounded-[50px] text-[12px] font-medium transition-colors cursor-default",
+                  "px-4 py-2 rounded-[50px] text-[12px] font-medium transition-colors cursor-pointer",
                   activeTab === 'enviadas'
                     ? "bg-green-700 text-white"
-                    : "bg-pink-200 text-gray-700 hover:bg-pink-300"
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                 )}
               >
                 Licitações Enviadas
               </button>
             </div>
           </div>
-          <div className="flex gap-2 shrink-0">
-            <Button variant="outline" size="sm">
-              <Download className="w-4 h-4 mr-2" />
-              Exportar
-            </Button>
+          <div className="flex gap-2 shrink-0 items-center">
+            {activeTab === 'conferir' && (
+              <div className="flex items-center gap-2">
+                {/* Checkbox seleção múltipla */}
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={selecaoMultipla}
+                    className="w-4 h-4 accent-[#02572E]"
+                    onChange={(e) => {
+                      setSelecaoMultipla(e.target.checked);
+                      setSelectedConferirIds(new Set());
+                      setSelectedConferir(null);
+                    }}
+                  />
+                  <span className="text-xs text-muted-foreground">Seleção Múltipla</span>
+                </label>
+
+                <span className="text-xs text-muted-foreground shrink-0">UF</span>
+                <select
+                  value={filtroUFConferir}
+                  onChange={(e) => setFiltroUFConferir(e.target.value)}
+                  className="h-8 text-sm border border-border rounded-md px-2 bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Todas</option>
+                  {REGIOES_E_UFS.flatMap(r => r.ufs).sort().map(uf => (
+                    <option key={uf} value={uf}>{uf}</option>
+                  ))}
+                </select>
+
+                {/* Botões para seleção múltipla */}
+                {selecaoMultipla && selectedConferirIds.size > 0 && (() => {
+                  const selecionadas = contratacoes.filter(x => selectedConferirIds.has(x.id));
+                  const todasLidas = selecionadas.every(x => x.lida);
+                  const novoValorLida = !todasLidas;
+                  return (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        const ids = Array.from(selectedConferirIds);
+                        await Promise.all(ids.map(id => supabase.from('contratacoes').update({ lida: novoValorLida }).eq('id', id)));
+                        setContratacoes(prev => prev.map(x => selectedConferirIds.has(x.id) ? { ...x, lida: novoValorLida } : x));
+                        setSelectedConferirIds(new Set());
+                        toast.success(novoValorLida ? `${ids.length} licitação(ões) marcadas como lidas!` : `${ids.length} licitação(ões) desmarcadas!`);
+                      }}
+                    >
+                      {todasLidas ? `Remover de Lida (${selectedConferirIds.size})` : `Marcar como Lida (${selectedConferirIds.size})`}
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white">
+                          Excluir ({selectedConferirIds.size})
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Devolver licitações para pendentes?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {selectedConferirIds.size} licitação(ões) serão devolvidas para o status pendente.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-red-500 hover:bg-red-600 text-white"
+                            onClick={async () => {
+                              const ids = Array.from(selectedConferirIds);
+                              await Promise.all(ids.map(id => supabase.from('contratacoes').update({ cadastrado: false }).eq('id', id)));
+                              setContratacoes(prev => prev.filter(x => !selectedConferirIds.has(x.id)));
+                              setSelectedConferirIds(new Set());
+                              toast.success(`${ids.length} licitação(ões) devolvidas para pendentes!`);
+                            }}
+                          >
+                            Confirmar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </>
+                  );
+                })()}
+
+                {/* Botões para seleção simples */}
+                {!selecaoMultipla && selectedConferir && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        const novoValor = !selectedConferir.lida;
+                        await supabase.from('contratacoes').update({ lida: novoValor }).eq('id', selectedConferir.id);
+                        setContratacoes(prev => prev.map(x => x.id === selectedConferir.id ? { ...x, lida: novoValor } : x));
+                        setSelectedConferir(prev => prev ? { ...prev, lida: novoValor } : prev);
+                      }}
+                    >
+                      {selectedConferir.lida ? 'Desmarcar Lida' : 'Marcar como Lida'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-[#02572E] text-white hover:bg-[#024a27]"
+                      onClick={() => navigate(`/licitacoes/cadastro?id=${selectedConferir.id}`)}
+                    >
+                      Abrir
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white">
+                          Excluir
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Devolver licitação para pendentes?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            A licitação "<strong>{selectedConferir.orgao_pncp || selectedConferir.num_ativa || ''}</strong>" será devolvida para o status pendente.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-red-500 hover:bg-red-600 text-white"
+                            onClick={async () => {
+                              await supabase.from('contratacoes').update({ cadastrado: false }).eq('id', selectedConferir.id);
+                              setContratacoes(prev => prev.filter(x => x.id !== selectedConferir.id));
+                              setSelectedConferir(null);
+                              setConferirRamos([]);
+                              toast.success('Licitação devolvida para pendentes!');
+                            }}
+                          >
+                            Confirmar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </>
+                )}
+              </div>
+            )}
+            {activeTab === 'enviadas' && (
+              <div className="flex items-center gap-2">
+                {/* Botões para seleção simples */}
+                {selectedEnviada && (
+                  <>
+                    <Button
+                      size="sm"
+                      className="bg-[#02572E] text-white hover:bg-[#024a27]"
+                      onClick={() => navigate(`/licitacoes/cadastro?id=${selectedEnviada.id}`)}
+                    >
+                      Abrir
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white">
+                          Excluir
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Excluir licitação?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            A licitação "<strong>{selectedEnviada.orgao_pncp || selectedEnviada.num_ativa || ''}</strong>" será excluída.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-red-500 hover:bg-red-600 text-white"
+                            onClick={async () => {
+                              await supabase.from('contratacoes').update({ excluido: true }).eq('id', selectedEnviada.id);
+                              setContratacoes(prev => prev.filter(x => x.id !== selectedEnviada.id));
+                              setSelectedEnviada(null);
+                              setEnviadasRamos([]);
+                              toast.success('Licitação excluída!');
+                            }}
+                          >
+                            Confirmar
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </>
+                )}
+
+                {/* Botão Filtros */}
+                <Popover open={filtroEnviadasOpen} onOpenChange={(open) => {
+                  // Não fecha o popover de filtros quando um dos popups de busca está aberto
+                  if (!open && (buscarTipoEnviadasOpen || buscarOrgaoEnviadasOpen)) return;
+                  setFiltroEnviadasOpen(open);
+                }}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <Filter className="w-4 h-4 mr-2" />
+                      Filtros
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[860px] max-w-[95vw] p-4" align="end" side="bottom" sideOffset={8}>
+                    <div className="space-y-3">
+                      {/* Linha 1: N. Controle Ativa | Dt. Envio Início | Dt. Envio Fim | Tipo */}
+                      <div className="grid grid-cols-[160px_1fr_1fr_1fr] gap-3 items-end">
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs font-medium">N. Controle Ativa</Label>
+                          <Input
+                            placeholder=""
+                            value={filtroEnviadasNControle}
+                            onChange={(e) => setFiltroEnviadasNControle(e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs font-medium">Dt. Envio Início</Label>
+                          <Input
+                            type="datetime-local"
+                            value={filtroEnviadasDataInicio}
+                            onChange={(e) => setFiltroEnviadasDataInicio(e.target.value)}
+                            className="h-8 text-sm w-full"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs font-medium">Dt. Envio Fim</Label>
+                          <Input
+                            type="datetime-local"
+                            value={filtroEnviadasDataFim}
+                            onChange={(e) => setFiltroEnviadasDataFim(e.target.value)}
+                            className="h-8 text-sm w-full"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs font-medium">Tipo</Label>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              readOnly
+                              placeholder=""
+                              value={filtroEnviadasTipoLabel}
+                              className="h-8 text-sm flex-1 cursor-default bg-white"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              className="rounded-full w-7 h-7 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                              onClick={() => setBuscarTipoEnviadasOpen(true)}
+                            >
+                              <Search className="h-3.5 w-3.5" />
+                            </Button>
+                            {filtroEnviadasTipo && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6 shrink-0 text-muted-foreground hover:text-foreground"
+                                onClick={() => { setFiltroEnviadasTipo(''); setFiltroEnviadasTipoLabel(''); }}
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Linha 2: UF | Órgão */}
+                      <div className="flex gap-3 items-end">
+                        <div className="flex flex-col gap-1 w-[70px]">
+                          <Label className="text-xs font-medium">UF</Label>
+                          <select
+                            value={filtroEnviadasUF}
+                            onChange={(e) => setFiltroEnviadasUF(e.target.value)}
+                            className="h-8 text-sm border border-border rounded-md px-2 bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                          >
+                            <option value=""></option>
+                            {UF_LIST.sort().map(uf => <option key={uf} value={uf}>{uf}</option>)}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1 flex-1">
+                          <Label className="text-xs font-medium">Órgão</Label>
+                          <div className="flex items-center gap-1">
+                            <Input
+                              placeholder=""
+                              value={filtroEnviadasOrgao}
+                              onChange={(e) => setFiltroEnviadasOrgao(e.target.value)}
+                              className="h-8 text-sm flex-1"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              className="rounded-full w-7 h-7 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                              onClick={() => setBuscarOrgaoEnviadasOpen(true)}
+                            >
+                              <Search className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Botões */}
+                      <div className="flex gap-2 pt-2 border-t border-border">
+                        <Button size="sm" onClick={() => { applyFilters(); setFiltroEnviadasOpen(false); }}>
+                          Pesquisar
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          setFiltroEnviadasNControle('');
+                          setFiltroEnviadasDataInicio('');
+                          setFiltroEnviadasDataFim('');
+                          setFiltroEnviadasUF('');
+                          setFiltroEnviadasTipo('');
+                          setFiltroEnviadasTipoLabel('');
+                          setFiltroEnviadasOrgao('');
+                        }}>
+                          <X className="w-4 h-4 mr-1" />
+                          Limpar
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )}
+            {activeTab !== 'conferir' && activeTab !== 'enviadas' && (
+              <Button variant="outline" size="sm">
+                <Download className="w-4 h-4 mr-2" />
+                Exportar
+              </Button>
+            )}
             {activeTab === 'todas' && (
             <Popover open={filterPopoverOpen} onOpenChange={setFilterPopoverOpen}>
               <PopoverTrigger asChild>
@@ -789,7 +1363,8 @@ export default function LicitacaoConsulta() {
         </div>
 
         {/* Área da lista: overflow-auto garante scroll horizontal e vertical */}
-        <div ref={tableContainerRef} className={cn("flex-1 min-h-0 min-w-0 overflow-auto", resizingColumn && "select-none")}>
+        <div className={cn("flex-1 min-h-0 min-w-0 flex flex-col", (activeTab === 'conferir' || activeTab === 'enviadas' || (activeTab === 'todas' && filtroLayout === 'unidades' && !!selectedUnidade)) && "overflow-hidden")}>
+        <div ref={tableContainerRef} className={cn("min-w-0 overflow-auto", activeTab === 'conferir' ? "flex-1 min-h-0" : "flex-1 min-h-0", resizingColumn && "select-none")}>
           {loading ? (
             <div className="flex items-center justify-center h-64 flex-1">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -798,7 +1373,58 @@ export default function LicitacaoConsulta() {
             <div className="text-center py-12 text-muted-foreground flex-1">
               Nenhuma licitação encontrada
             </div>
-          ) : (activeTab === 'todas' || activeTab === 'conferir') ? (
+          ) : activeTab === 'conferir' ? (
+            <table className="w-full caption-bottom text-sm border-collapse">
+              <thead className="sticky top-0 bg-white z-20 shadow-sm">
+                <tr className="border-b bg-white">
+                  {['UF', 'Órgão', 'Tipo', 'Edital', 'Dt. Licitação', 'N. Controle', 'Rev', 'Usuário', 'Lida?'].map(col => (
+                    <th key={col} className="h-10 px-3 text-left align-middle text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {contratacoes.map((c) => {
+                  const isSelected = selecaoMultipla ? selectedConferirIds.has(c.id) : selectedConferir?.id === c.id;
+                  return (
+                  <tr
+                    key={c.id}
+                    className={cn("border-b transition-colors cursor-pointer", isSelected ? "bg-[#02572E] text-white" : c.lida ? "bg-yellow-200 hover:bg-yellow-300 text-[#1A1A1A]" : "hover:bg-muted/50")}
+                    onClick={() => selecaoMultipla ? toggleSelecaoItem(c) : handleSelectConferir(c)}
+                  >
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{c.uf || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm max-w-[200px] truncate">{c.orgao_pncp || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{c.tipo_licitacao?.sigla || c.modalidade || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">
+                      {(() => {
+                        const titulo = ((c as any).titulo || '').replace(/edital\s+n[ºo°]?\s*/i, '').trim();
+                        const ano = (c as any).ano_compra;
+                        return titulo && ano ? `${titulo}/${ano}` : titulo || c.num_licitacao || '-';
+                      })()}
+                    </td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(c.dt_publicacao)}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatarNumAtiva(c.num_ativa || c.n_controle_ativa || null, (c as any).created_at)}</td>
+                    <td className="px-3 py-1.5 text-sm text-center">
+                      {c.revisao ? <span className={isSelected ? 'text-white font-bold' : 'text-green-600 font-bold'}>S</span> : <span className="opacity-40">N</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{(c as any).cadastrado_por_nome || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={!!c.lida}
+                        className="w-4 h-4 cursor-pointer accent-[#02572E]"
+                        onChange={async (e) => {
+                          const novoValor = e.target.checked;
+                          await supabase.from('contratacoes').update({ lida: novoValor }).eq('id', c.id);
+                          setContratacoes(prev => prev.map(x => x.id === c.id ? { ...x, lida: novoValor } : x));
+                        }}
+                      />
+                    </td>
+                  </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : activeTab === 'todas' ? (
             <div className="inline-block min-w-full" style={{ minWidth: tabelaLargura }}>
               {filtroLayout === 'resumido' ? (
                 <table className="caption-bottom text-sm table-fixed border-collapse" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
@@ -871,7 +1497,7 @@ export default function LicitacaoConsulta() {
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).unidade || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).un_cod || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">{c.orgao_pncp || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).cnpj || '-'}</td>
+                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{getCnpj(c) || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).tipo_licitacao?.sigla || (c as any).modalidade || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-[200px] truncate">{(c as any).conteudo || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).complemento || '-'}</td>
@@ -916,21 +1542,33 @@ export default function LicitacaoConsulta() {
                     </tr>
                   </thead>
                   <tbody className="[&_tr:last-child]:border-0">
-                    {contratacoes.map((c) => (
-                      <tr key={c.id} className="border-b transition-colors hover:bg-muted/50">
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{c.uf || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).esfera || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).poder || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">{c.orgao_pncp || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).cnpj || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).unidade || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).un_cod || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).municipio || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-right">
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-700 p-0" onClick={() => navigate(`/licitacoes/cadastro?id=${c.id}`)} title="Visualizar"><Eye className="w-3.5 h-3.5" /></Button>
-                        </td>
-                      </tr>
-                    ))}
+                    {contratacoes.map((c) => {
+                      const cnpj = getCnpj(c);
+                      const orgaoAtiva = cnpj ? vinculosMap[cnpj]?.orgao_nome : undefined;
+                      const isSelected = selectedUnidade?.id === c.id;
+                      return (
+                        <tr
+                          key={c.id}
+                          className={cn("border-b transition-colors cursor-pointer", isSelected ? "bg-[#02572E] text-white" : "hover:bg-muted/50")}
+                          onClick={() => handleSelectUnidade(c)}
+                        >
+                          <td className="p-4 align-middle py-1.5 text-sm">{c.uf || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).esfera || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).poder || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm max-w-xs truncate">{c.orgao_pncp || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{cnpj || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).unidade || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).un_cod || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).municipio || '-'}</td>
+                          <td className={cn("p-4 align-middle py-1.5 text-sm font-medium", orgaoAtiva ? (isSelected ? 'text-green-200' : 'text-green-700') : 'opacity-40')}>
+                            {orgaoAtiva || '-'}
+                          </td>
+                          <td className="p-4 align-middle py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-700 p-0" onClick={() => navigate(`/licitacoes/cadastro?id=${c.id}`)} title="Visualizar"><Eye className="w-3.5 h-3.5" /></Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : filtroLayout === 'modalidade' ? (
@@ -1006,48 +1644,323 @@ export default function LicitacaoConsulta() {
                 </table>
               )}
             </div>
-          ) : (
-            <div className="h-full overflow-auto">
-              <table className="w-full caption-bottom text-sm">
-                <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
-                  <tr className="bg-white border-b">
-                    <th className="h-12 px-4 text-left align-middle font-medium bg-white">Título</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium bg-white">UF</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium bg-white">Órgão</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium bg-white">Nº Licitação</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium bg-white">Data Pub.</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium bg-white">Valor Est.</th>
-                    <th className="h-12 px-4 text-left align-middle font-medium w-12 bg-white"></th>
-                  </tr>
-                </thead>
-                <tbody className="[&_tr:last-child]:border-0">
-                  {contratacoes.map((c) => (
-                    <tr key={c.id} className="border-b transition-colors hover:bg-muted/50">
-                      <td className="p-4 align-middle font-medium max-w-xs truncate">
-                        {c.titulo || '-'}
-                      </td>
-                      <td className="p-4 align-middle">{c.uf || '-'}</td>
-                      <td className="p-4 align-middle max-w-xs truncate">{c.orgao_pncp || '-'}</td>
-                      <td className="p-4 align-middle">{(c as any).sequencial_compra && (c as any).ano_compra ? `${(c as any).sequencial_compra}/${(c as any).ano_compra}` : (c.num_licitacao || '-')}</td>
-                      <td className="p-4 align-middle">{formatDate(c.dt_encerramento_proposta)}</td>
-                      <td className="p-4 align-middle">{formatCurrency(c.valor_estimado)}</td>
-                      <td className="p-4 align-middle">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => navigate(`/licitacoes/cadastro?id=${c.id}`)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                      </td>
-                    </tr>
+          ) : activeTab === 'enviadas' ? (
+            <table className="w-full caption-bottom text-sm border-collapse">
+              <thead className="sticky top-0 bg-white z-20 shadow-sm">
+                <tr className="border-b bg-white">
+                  {['N. Controle', 'UF', 'Rev', 'Tipo', 'Edital', 'Órgão', 'Dt. Licitação', 'Dt. Envio'].map(col => (
+                    <th key={col} className="h-10 px-3 text-left align-middle text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap">{col}</th>
                   ))}
-                </tbody>
-              </table>
+                </tr>
+              </thead>
+              <tbody>
+                {contratacoes.map((c) => {
+                  const isSelected = selectedEnviada?.id === c.id;
+                  return (
+                    <tr
+                      key={c.id}
+                      className={cn("border-b transition-colors cursor-pointer", isSelected ? "bg-[#02572E] text-white" : "hover:bg-muted/50")}
+                      onClick={() => handleSelectEnviada(c)}
+                    >
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatarNumAtiva(c.num_ativa || c.n_controle_ativa || null, (c as any).created_at)}</td>
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{c.uf || '-'}</td>
+                      <td className="px-3 py-1.5 text-sm text-center">
+                        {c.revisao ? <span className={isSelected ? 'text-white font-bold' : 'text-green-600 font-bold'}>S</span> : <span className="opacity-40">N</span>}
+                      </td>
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{c.tipo_licitacao?.sigla || c.modalidade || '-'}</td>
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">
+                        {(() => {
+                          const titulo = ((c as any).titulo || '').replace(/edital\s+n[ºo°]?\s*/i, '').trim();
+                          const ano = (c as any).ano_compra;
+                          return titulo && ano ? `${titulo}/${ano}` : titulo || c.num_licitacao || '-';
+                        })()}
+                      </td>
+                      <td className="px-3 py-1.5 text-sm max-w-[200px] truncate">{c.orgao_pncp || '-'}</td>
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(c.dt_publicacao)}</td>
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate((c as any).dt_envio)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : null}
+        </div>
+
+        {/* Painel de detalhe - aba Conferir */}
+        {activeTab === 'conferir' && selectedConferir && (
+          <div className="h-48 flex-shrink-0 border-t border-border flex gap-0 bg-white">
+            {/* Conteúdo */}
+            <div className="flex-1 p-3 overflow-auto text-xs text-[#1A1A1A] leading-relaxed whitespace-pre-wrap border-r border-border">
+              {(selectedConferir as any).conteudo || (selectedConferir as any).textos_cadastro_manual || 'Sem conteúdo'}
             </div>
-          )}
+            {/* Atividades */}
+            <div className="w-56 flex-shrink-0 p-3 overflow-auto">
+              <p className="text-xs font-semibold text-[#1A1A1A] mb-2">Atividades ({conferirRamos.length})</p>
+              {loadingConferirRamos ? (
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              ) : conferirRamos.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nenhuma atividade</p>
+              ) : (
+                <ul className="space-y-1">
+                  {conferirRamos.map((nome, i) => (
+                    <li key={i} className="text-xs text-[#1A1A1A]">• {nome}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Painel de associação - layout Unidades */}
+        {activeTab === 'todas' && filtroLayout === 'unidades' && selectedUnidade && (
+          <div className="h-40 flex-shrink-0 border-t border-border flex gap-0 bg-white">
+            {/* Info da unidade PNCP */}
+            <div className="w-72 flex-shrink-0 p-3 overflow-auto border-r border-border text-xs text-[#1A1A1A] space-y-0.5">
+              <p className="font-semibold text-[11px] text-muted-foreground mb-1">UNIDADE PNCP</p>
+              {(selectedUnidade as any).un_cod && <p><span className="font-medium">IdUnidade:</span> {(selectedUnidade as any).un_cod}</p>}
+              {getCnpj(selectedUnidade) && <p><span className="font-medium">CNPJ:</span> {getCnpj(selectedUnidade)}</p>}
+              {(selectedUnidade as any).esfera && <p><span className="font-medium">Esfera:</span> {(selectedUnidade as any).esfera}</p>}
+              {(selectedUnidade as any).poder && <p><span className="font-medium">Poder:</span> {(selectedUnidade as any).poder}</p>}
+              {selectedUnidade.orgao_pncp && <p><span className="font-medium">Órgão:</span> {selectedUnidade.orgao_pncp}</p>}
+              {(selectedUnidade as any).unidade && <p><span className="font-medium">Unidade:</span> {(selectedUnidade as any).unidade}</p>}
+              {selectedUnidade.uf && <p><span className="font-medium">UF:</span> {selectedUnidade.uf}</p>}
+              {(selectedUnidade as any).municipio && <p><span className="font-medium">Município:</span> {(selectedUnidade as any).municipio}</p>}
+            </div>
+
+            {/* Área de associação */}
+            <div className="flex-1 p-4 flex flex-col gap-3 overflow-auto">
+              <p className="text-xs font-semibold text-[#1A1A1A]">Associar a Órgão Ativa</p>
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-1 flex-1">
+                  <Label className="text-xs text-muted-foreground">Órgão</Label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      placeholder="Digite o nome ou Tab para buscar..."
+                      value={vinculoOrgaoNome}
+                      onChange={(e) => {
+                        setVinculoOrgaoNome(e.target.value);
+                        setVinculoOrgaoId(''); // limpa seleção ao digitar
+                      }}
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Tab' && vinculoOrgaoNome.trim()) {
+                          e.preventDefault();
+                          const { data } = await supabase
+                            .from('orgaos')
+                            .select('id, nome_orgao')
+                            .ilike('nome_orgao', `%${vinculoOrgaoNome.trim()}%`)
+                            .limit(2);
+                          if (data && data.length === 1) {
+                            setVinculoOrgaoId(data[0].id);
+                            setVinculoOrgaoNome(data[0].nome_orgao);
+                          } else {
+                            // não encontrou exatamente 1 — abre pesquisa avançada
+                            setBuscarOrgaoUnidadeOpen(true);
+                          }
+                        }
+                      }}
+                      className="h-8 text-sm flex-1 bg-white"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      className="rounded-full w-8 h-8 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
+                      onClick={() => setBuscarOrgaoUnidadeOpen(true)}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                    {vinculoOrgaoId && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => { setVinculoOrgaoId(''); setVinculoOrgaoNome(''); }}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="bg-[#02572E] text-white hover:bg-[#024a27]"
+                  onClick={handleAssociarOrgao}
+                  disabled={!vinculoOrgaoId}
+                >
+                  Associar
+                </Button>
+                {vinculoOrgaoId && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleViewOrgao(vinculoOrgaoId)}
+                  >
+                    Abrir Órgão
+                  </Button>
+                )}
+              </div>
+              {/* Mostra associação existente */}
+              {getCnpj(selectedUnidade) && vinculosMap[getCnpj(selectedUnidade)] && (
+                <p className="text-xs text-green-700 font-medium">
+                  ✓ Atualmente associado a: <strong>{vinculosMap[getCnpj(selectedUnidade)].orgao_nome}</strong>
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Painel de detalhe - aba Licitações Enviadas */}
+        {activeTab === 'enviadas' && selectedEnviada && (
+          <div className="h-48 flex-shrink-0 border-t border-border flex gap-0 bg-white">
+            {/* Conteúdo */}
+            <div className="flex-1 p-3 overflow-auto text-xs text-[#1A1A1A] leading-relaxed whitespace-pre-wrap border-r border-border">
+              {(selectedEnviada as any).conteudo || (selectedEnviada as any).textos_cadastro_manual || 'Sem conteúdo'}
+            </div>
+            {/* Atividades */}
+            <div className="w-56 flex-shrink-0 p-3 overflow-auto">
+              <p className="text-xs font-semibold text-[#1A1A1A] mb-2">Atividades ({enviadasRamos.length})</p>
+              {loadingEnviadasRamos ? (
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              ) : enviadasRamos.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nenhuma atividade</p>
+              ) : (
+                <ul className="space-y-1">
+                  {enviadasRamos.map((nome, i) => (
+                    <li key={i} className="text-xs text-[#1A1A1A]">• {nome}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
         </div>
       </div>
+      {/* Dialog de Visualização de Órgão */}
+      <Dialog open={viewOrgaoDialogOpen} onOpenChange={setViewOrgaoDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-[#262626]">
+              Visualização de Órgãos
+            </DialogTitle>
+          </DialogHeader>
+          {loadingOrgaoView ? (
+            <div className="flex items-center justify-center h-64">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : orgaoViewData ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-6 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Nome do Órgão</Label>
+                  <Input value={orgaoViewData.nome_orgao || ''} className="h-9 text-[#262626]" disabled />
+                </div>
+                <div className="col-span-3 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Compras NET</Label>
+                  <Input value={orgaoViewData.compras_net || ''} className="h-9 text-[#262626]" disabled />
+                </div>
+                <div className="col-span-3 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Compras MG</Label>
+                  <Input value={orgaoViewData.compras_mg || ''} className="h-9 text-[#262626]" disabled />
+                </div>
+              </div>
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-6 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Cidade IBGE</Label>
+                  <Input value={orgaoViewData.uf && orgaoViewData.cidade_nome ? `${orgaoViewData.uf} - ${orgaoViewData.cidade_nome}` : orgaoViewData.uf || orgaoViewData.cidade_nome || ''} className="h-9 text-[#262626]" disabled />
+                </div>
+                <div className="col-span-6 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Grupos de Orgãos</Label>
+                  <Input value={orgaoViewData.grupo_nome || ''} placeholder="Nenhum grupo selecionado" className="h-9 text-[#262626]" disabled />
+                </div>
+              </div>
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-7 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Endereço</Label>
+                  <Input value={orgaoViewData.endereco || ''} className="h-9 text-[#262626]" disabled />
+                </div>
+                <div className="col-span-5 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Telefone</Label>
+                  <Input value={orgaoViewData.telefone || ''} className="h-9 text-[#262626]" disabled />
+                </div>
+              </div>
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-4 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">Orgão</Label>
+                  <Textarea value={orgaoViewData.observacoes || ''} className="resize-none h-[120px] text-[14px] text-[#262626] bg-gray-50" disabled />
+                </div>
+                <div className="col-span-3 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">PNCP</Label>
+                  <Textarea value={orgaoViewData.obs_pncp || ''} className="resize-none h-[120px] text-[14px] text-[#262626] bg-gray-50" disabled />
+                </div>
+                <div className="col-span-5 space-y-0.5">
+                  <Label className="text-[14px] font-normal text-[#262626]">E-mails</Label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-3 h-[120px] overflow-y-auto">
+                    <div className="flex flex-wrap gap-2">
+                      {(orgaoViewData.emails || []).length > 0 ? (
+                        orgaoViewData.emails.map((email: string, index: number) => (
+                          <span key={index} className="inline-flex items-center gap-1 bg-muted px-2 py-1 rounded text-xs">{email}</span>
+                        ))
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Nenhum e-mail cadastrado</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Label className="text-[14px] font-normal text-[#262626]">Sites</Label>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-3 mt-1">
+                  <div className="flex flex-wrap gap-2">
+                    {(orgaoViewData.sites || []).length > 0 ? (
+                      orgaoViewData.sites.map((site: string, index: number) => (
+                        <span key={index} className="inline-flex items-center gap-1 bg-muted px-3 py-1.5 rounded text-sm">
+                          <a href={site} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{site}</a>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-muted-foreground">Nenhum site cadastrado</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <BuscarOrgaoPopup
+        open={buscarOrgaoUnidadeOpen}
+        onOpenChange={setBuscarOrgaoUnidadeOpen}
+        onOrgaoSelecionado={(orgao) => {
+          setVinculoOrgaoId(orgao.id);
+          setVinculoOrgaoNome(orgao.nome_orgao);
+          setBuscarOrgaoUnidadeOpen(false);
+        }}
+        termoInicial={vinculoOrgaoNome}
+      />
+
+      <BuscarTipoPopup
+        open={buscarTipoEnviadasOpen}
+        onOpenChange={setBuscarTipoEnviadasOpen}
+        onTipoSelecionado={(tipo) => {
+          setFiltroEnviadasTipo(tipo.id);
+          setFiltroEnviadasTipoLabel(tipo.sigla + (tipo.descricao ? ` - ${tipo.descricao}` : ''));
+          setBuscarTipoEnviadasOpen(false);
+        }}
+      />
+
+      <BuscarOrgaoPopup
+        open={buscarOrgaoEnviadasOpen}
+        onOpenChange={setBuscarOrgaoEnviadasOpen}
+        onOrgaoSelecionado={(orgao) => {
+          setFiltroEnviadasOrgao(orgao.nome_orgao);
+          setBuscarOrgaoEnviadasOpen(false);
+        }}
+        termoInicial={filtroEnviadasOrgao}
+      />
     </MainLayout>
   );
 }
