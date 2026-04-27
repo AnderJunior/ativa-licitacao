@@ -117,6 +117,11 @@ export default function LicitacaoConsulta() {
   const [loading, setLoading] = useState(true);
   const [contratacoes, setContratacoes] = useState<Contratacao[]>([]);
   const [activeTab, setActiveTab] = useState(savedFilters?.activeTab || 'todas');
+  // Paginação
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const PER_PAGE = 100;
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
   const [filtroUF, setFiltroUF] = useState(savedFilters?.filtroUF || '');
   const [filtroOrgao, setFiltroOrgao] = useState(savedFilters?.filtroOrgao || '');
@@ -337,7 +342,8 @@ export default function LicitacaoConsulta() {
   }, [colunasAtuais, setWidth]);
 
   useEffect(() => {
-    loadContratacoes();
+    setCurrentPage(1);
+    loadContratacoes(1);
   }, [activeTab, filtroUFConferir]);
 
   // Fecha o modal de filtros ao trocar para aba Conferir (filtros só na Lista Completa)
@@ -392,7 +398,8 @@ export default function LicitacaoConsulta() {
     });
   };
 
-  const loadContratacoes = async () => {
+  const loadContratacoes = async (page?: number) => {
+    const pageToLoad = page || currentPage;
     setLoading(true);
     try {
       // Filtro por aba
@@ -477,6 +484,8 @@ export default function LicitacaoConsulta() {
       const params: Record<string, string> = {
         sort: 'dt_publicacao',
         order: 'desc',
+        page: String(pageToLoad),
+        per_page: String(PER_PAGE),
       };
 
       if (selectedUFs.size > 0) params.ufs = Array.from(selectedUFs).join(',');
@@ -508,27 +517,15 @@ export default function LicitacaoConsulta() {
         }
       }
 
-      const data = await api.get<Contratacao[]>('/api/contratacoes', params);
+      const response = await api.get<{ data: Contratacao[]; total: number; page: number; per_page: number; total_pages: number }>('/api/contratacoes', params);
 
-      // Ordena do mais recente para o mais antigo baseado em dt_publicacao
-      // Se dt_publicacao for null, usa dt_vinculo_ativa ou created_at como fallback
-      if (data) {
-        data.sort((a, b) => {
-          // Prioriza dt_publicacao, depois dt_vinculo_ativa, depois created_at
-          const dataA = a.dt_publicacao || (a as any).dt_vinculo_ativa || (a as any).created_at;
-          const dataB = b.dt_publicacao || (b as any).dt_vinculo_ativa || (b as any).created_at;
-
-          if (!dataA && !dataB) return 0;
-          if (!dataA) return 1; // Sem data vai para o final
-          if (!dataB) return -1; // Sem data vai para o final
-
-          // Mais recente primeiro (dataB - dataA)
-          return new Date(dataB).getTime() - new Date(dataA).getTime();
-        });
-      }
+      const data = response?.data || [];
+      setTotalPages(response?.total_pages || 1);
+      setTotalRecords(response?.total || 0);
+      setCurrentPage(response?.page || 1);
 
       // Carregar tipos de licitação se necessário
-      if (data) {
+      if (data.length > 0) {
         const tipoIds = [...new Set(data
           .map(c => (c as any).descricao_modalidade)
           .filter(id => id) as string[])];
@@ -550,7 +547,7 @@ export default function LicitacaoConsulta() {
         }
       }
 
-      setContratacoes(data || []);
+      setContratacoes(data);
     } catch (error: any) {
       toast.error('Erro ao carregar: ' + error.message);
     } finally {
@@ -583,7 +580,14 @@ export default function LicitacaoConsulta() {
   };
 
   const applyFilters = () => {
-    loadContratacoes();
+    setCurrentPage(1);
+    loadContratacoes(1);
+  };
+
+  const goToPage = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+    loadContratacoes(page);
   };
 
   // Modalidades únicas para o layout modalidade
@@ -1782,6 +1786,73 @@ export default function LicitacaoConsulta() {
             </table>
           ) : null}
         </div>
+
+        {/* Paginação — apenas na aba Lista Completa */}
+        {activeTab === 'todas' && !loading && totalPages > 1 && (
+          <div className="flex-shrink-0 border-t border-border bg-white px-4 py-2 flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">
+              {totalRecords.toLocaleString('pt-BR')} licitações — Página {currentPage} de {totalPages}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => goToPage(1)}
+                disabled={currentPage === 1}
+                className="h-8 px-2"
+              >
+                ««
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="h-8 px-3"
+              >
+                ‹ Anterior
+              </Button>
+
+              {/* Números de página */}
+              {(() => {
+                const pages: number[] = [];
+                const start = Math.max(1, currentPage - 2);
+                const end = Math.min(totalPages, currentPage + 2);
+                for (let i = start; i <= end; i++) pages.push(i);
+                return pages.map(p => (
+                  <Button
+                    key={p}
+                    variant={p === currentPage ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => goToPage(p)}
+                    className={cn("h-8 w-8 p-0", p === currentPage && "bg-[#1B5E20] hover:bg-[#2E7D32] text-white")}
+                  >
+                    {p}
+                  </Button>
+                ));
+              })()}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="h-8 px-3"
+              >
+                Próxima ›
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => goToPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="h-8 px-2"
+              >
+                »»
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Painel de detalhe - aba Conferir */}
         {activeTab === 'conferir' && selectedConferir && (
