@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -31,15 +31,11 @@ export default function OrgaosAgrupamentos() {
 
   const loadGrupos = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('grupo_de_orgaos')
-      .select('*')
-      .order('nome');
-
-    if (error) {
-      toast.error('Erro ao carregar grupos');
-    } else {
+    try {
+      const data = await api.get<GrupoOrgao[]>('/api/grupo-orgaos');
       setGrupos(data || []);
+    } catch {
+      toast.error('Erro ao carregar grupos');
     }
     setLoading(false);
   };
@@ -51,32 +47,25 @@ export default function OrgaosAgrupamentos() {
     }
 
     setSaving(true);
-    const { error } = await supabase
-      .from('grupo_de_orgaos')
-      .insert({ nome: newNome.trim() });
-
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('Este nome já existe');
-      } else {
-        toast.error('Erro ao adicionar: ' + error.message);
-      }
-    } else {
+    try {
+      await api.post('/api/grupo-orgaos', { nome: newNome.trim() });
       toast.success('Grupo adicionado!');
       setNewNome('');
       setDialogOpen(false);
       loadGrupos();
+    } catch (err: any) {
+      toast.error(err.message?.includes('Unique') ? 'Este nome já existe' : ('Erro ao adicionar: ' + err.message));
     }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('grupo_de_orgaos').delete().eq('id', id);
-    if (error) {
-      toast.error('Erro ao excluir: ' + error.message);
-    } else {
+    try {
+      await api.delete(`/api/grupo-orgaos/${id}`);
       toast.success('Grupo excluído!');
       loadGrupos();
+    } catch (err: any) {
+      toast.error('Erro ao excluir: ' + err.message);
     }
   };
 

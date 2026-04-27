@@ -1,10 +1,20 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
+// Formato compatível com o que os componentes já usam (user.id, user.email, user.user_metadata.full_name)
+export interface AppUser {
+  id: string;
+  email: string;
+  role: string;
+  user_metadata: {
+    full_name: string;
+  };
+}
 
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
+  user: AppUser | null;
+  token: string | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName?: string) => Promise<{ error: Error | null }>;
@@ -14,52 +24,101 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Ao montar, verificar se há token salvo e validá-lo
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(prev => prev?.access_token === session?.access_token ? prev : session);
-        setUser(prev => prev?.id === session?.user?.id ? prev : (session?.user ?? null));
-        setLoading(false);
-      }
-    );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const savedToken = localStorage.getItem('auth_token');
+    if (savedToken) {
+      // Validar token chamando /api/auth/me
+      fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${savedToken}` },
+      })
+        .then(res => {
+          if (res.ok) return res.json();
+          throw new Error('Token inválido');
+        })
+        .then(data => {
+          setToken(savedToken);
+          setUser({
+            id: data.id,
+            email: data.email,
+            role: data.role,
+            user_metadata: { full_name: data.full_name || '' },
+          });
+        })
+        .catch(() => {
+          localStorage.removeItem('auth_token');
+          setToken(null);
+          setUser(null);
+        })
+        .finally(() => setLoading(false));
+    } else {
       setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    }
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error };
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: new Error(body.error || 'Erro ao fazer login') };
+      }
+
+      const data = await res.json();
+      localStorage.setItem('auth_token', data.token);
+      setToken(data.token);
+      setUser({
+        id: data.user.id,
+        email: data.user.email,
+        role: data.user.role,
+        user_metadata: { full_name: data.user.full_name || '' },
+      });
+      return { error: null };
+    } catch (err) {
+      return { error: err as Error };
+    }
   };
 
   const signUp = async (email: string, password: string, fullName?: string) => {
-    const redirectUrl = `${window.location.origin}/`;
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: { full_name: fullName }
+    try {
+      const currentToken = localStorage.getItem('auth_token');
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(currentToken ? { Authorization: `Bearer ${currentToken}` } : {}),
+        },
+        body: JSON.stringify({ email, password, full_name: fullName || email.split('@')[0] }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { error: new Error(body.error || 'Erro ao criar conta') };
       }
-    });
-    return { error };
+
+      return { error: null };
+    } catch (err) {
+      return { error: err as Error };
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    localStorage.removeItem('auth_token');
+    setToken(null);
+    setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, token, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -78,22 +78,19 @@ export default function PermissoesAcesso() {
   const loadUsuarios = async () => {
     setLoadingUsuarios(true);
     try {
-      const [profilesRes, menusRes, permRes, rolesRes] = await Promise.all([
-        supabase.from('profiles').select('id, user_id, full_name, email, cpf, created_at').order('full_name'),
-        supabase.from('menus').select('id, nome, path, ordem, parent_id').order('ordem'),
-        supabase.from('user_permissoes').select('user_id, menu_id, abrir, salvar, excluir'),
-        supabase.from('user_roles').select('user_id, role'),
+      const [usersData, menusData, permData] = await Promise.all([
+        api.get<(Profile & { role?: string })[]>('/api/users'),
+        api.get<Menu[]>('/api/menus'),
+        api.get<UserPermissao[]>('/api/permissoes'),
       ]);
-      if (profilesRes.error) {
-        toast.error('Erro ao carregar usuários');
-      } else {
-        setUsuarios(profilesRes.data || []);
-      }
-      if (menusRes.data) setMenus(menusRes.data);
-      if (permRes.data) setUserPermissoes(permRes.data);
-      if (rolesRes.data) setAdminUserIds(rolesRes.data.filter((r) => r.role === 'admin').map((r) => r.user_id));
-    } catch {
-      toast.error('Erro ao carregar dados');
+      setUsuarios(usersData || []);
+      if (menusData) setMenus(menusData);
+      if (permData) setUserPermissoes(permData);
+      setAdminUserIds(
+        (usersData || []).filter((u) => u.role === 'admin').map((u) => u.user_id)
+      );
+    } catch (err: any) {
+      toast.error('Erro ao carregar dados: ' + err.message);
     }
     setLoadingUsuarios(false);
   };
@@ -133,19 +130,19 @@ export default function PermissoesAcesso() {
   };
 
   const handleExcluirUsuario = async (profile: Profile) => {
-    const { error } = await supabase.rpc('delete_user', { _user_id: profile.user_id });
-    if (error) {
-      toast.error('Erro ao excluir usuário: ' + error.message);
-    } else {
+    try {
+      await api.delete('/api/auth/users/' + profile.user_id);
       toast.success('Usuário excluído com sucesso!');
       setSelectedUsuario(null);
       setUserPermissoes((prev) => prev.filter((p) => p.user_id !== profile.user_id));
       setUsuarios((prev) => prev.filter((u) => u.id !== profile.id));
+    } catch (err: any) {
+      toast.error('Erro ao excluir usuário: ' + err.message);
     }
   };
 
   const handleResetSenha = async (profile: Profile) => {
-    toast.info('Reset de senha requer integração com Supabase Auth');
+    toast.info('Funcionalidade de reset de senha em desenvolvimento');
   };
 
   const handleEditarCadastro = (profile: Profile) => {
@@ -165,10 +162,8 @@ export default function PermissoesAcesso() {
   const handleToggleAdmin = async (profile: Profile) => {
     const userId = profile.user_id;
     const newRole = isAdmin(userId) ? 'user' : 'admin';
-    const { error } = await supabase.from('user_roles').update({ role: newRole }).eq('user_id', userId);
-    if (error) {
-      toast.error('Erro ao alterar role: ' + error.message);
-    } else {
+    try {
+      await api.patch('/api/users/' + profile.id + '/role', { role: newRole });
       if (newRole === 'admin') {
         setAdminUserIds((prev) => [...prev, userId]);
         toast.success('Usuário agora é Admin!');
@@ -176,6 +171,8 @@ export default function PermissoesAcesso() {
         setAdminUserIds((prev) => prev.filter((id) => id !== userId));
         toast.success('Admin removido com sucesso!');
       }
+    } catch (err: any) {
+      toast.error('Erro ao alterar role: ' + err.message);
     }
   };
 
@@ -191,28 +188,23 @@ export default function PermissoesAcesso() {
   };
 
   const toggleUserPermissao = async (userId: string, menuId: string, campo: 'abrir' | 'salvar' | 'excluir', valor: boolean) => {
-    const existe = userPermissoes.find((x) => x.user_id === userId && x.menu_id === menuId);
-    if (existe) {
-      const { error } = await supabase.from('user_permissoes').update({ [campo]: valor }).eq('user_id', userId).eq('menu_id', menuId);
-      if (error) {
-        toast.error('Erro ao atualizar permissão');
-      } else {
+    try {
+      await api.patch('/api/permissoes', { user_id: userId, menu_id: menuId, field: campo, value: valor });
+      const existe = userPermissoes.find((x) => x.user_id === userId && x.menu_id === menuId);
+      if (existe) {
         setUserPermissoes((prev) => prev.map((p) => (p.user_id === userId && p.menu_id === menuId ? { ...p, [campo]: valor } : p)));
-      }
-    } else {
-      const novoRegistro: UserPermissao = {
-        user_id: userId,
-        menu_id: menuId,
-        abrir: campo === 'abrir' ? valor : false,
-        salvar: campo === 'salvar' ? valor : false,
-        excluir: campo === 'excluir' ? valor : false,
-      };
-      const { error } = await supabase.from('user_permissoes').insert(novoRegistro);
-      if (error) {
-        toast.error('Erro ao salvar permissão');
       } else {
+        const novoRegistro: UserPermissao = {
+          user_id: userId,
+          menu_id: menuId,
+          abrir: campo === 'abrir' ? valor : false,
+          salvar: campo === 'salvar' ? valor : false,
+          excluir: campo === 'excluir' ? valor : false,
+        };
         setUserPermissoes((prev) => [...prev, novoRegistro]);
       }
+    } catch (err: any) {
+      toast.error('Erro ao salvar permissão: ' + err.message);
     }
   };
 

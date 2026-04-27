@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
 interface Tipo {
@@ -60,32 +60,25 @@ export function BuscarTipoPopup({
   const buscarTipos = useCallback(async () => {
     setCarregando(true);
     try {
-      let query = supabase
-        .from('tipo_licitacoes')
-        .select('id, sigla, descricao')
-        .order('sigla');
+      // Build search term combining sigla and descricao
+      const search = [filtroSigla.trim().replace(/%/g, ''), filtroDescricao.trim().replace(/%/g, '')].filter(Boolean).join(' ');
+      const params: Record<string, string> = {};
+      if (search) params.search = search;
 
-      // Aplica filtros com suporte a %
+      const data = await api.get<Tipo[]>('/api/tipo-licitacoes', params);
+
+      // Apply client-side filters for more precise matching
+      let filtered = data || [];
       if (filtroSigla.trim()) {
-        const filtro = filtroSigla.trim().replace(/%/g, '');
-        query = query.ilike('sigla', `%${filtro}%`);
+        const f = filtroSigla.trim().replace(/%/g, '').toLowerCase();
+        filtered = filtered.filter(t => t.sigla.toLowerCase().includes(f));
       }
-
       if (filtroDescricao.trim()) {
-        const filtro = filtroDescricao.trim().replace(/%/g, '');
-        query = query.ilike('descricao', `%${filtro}%`);
+        const f = filtroDescricao.trim().replace(/%/g, '').toLowerCase();
+        filtered = filtered.filter(t => (t.descricao || '').toLowerCase().includes(f));
       }
 
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('Erro ao buscar tipos:', error);
-        toast.error('Erro ao buscar tipos. Tente novamente.');
-        setTipos([]);
-        return;
-      }
-
-      setTipos(data || []);
+      setTipos(filtered);
     } catch (error) {
       console.error('Erro ao buscar tipos:', error);
       toast.error('Erro ao buscar tipos. Tente novamente.');
@@ -122,22 +115,10 @@ export function BuscarTipoPopup({
   // Busca automática quando o popup abre
   useEffect(() => {
     if (open) {
-      // Busca todos os tipos quando o popup abre (sem filtros)
       const buscarTodosTipos = async () => {
         setCarregando(true);
         try {
-          const { data, error } = await supabase
-            .from('tipo_licitacoes')
-            .select('id, sigla, descricao')
-            .order('sigla');
-
-          if (error) {
-            console.error('Erro ao buscar tipos:', error);
-            toast.error('Erro ao buscar tipos. Tente novamente.');
-            setTipos([]);
-            return;
-          }
-
+          const data = await api.get<Tipo[]>('/api/tipo-licitacoes');
           setTipos(data || []);
         } catch (error) {
           console.error('Erro ao buscar tipos:', error);
@@ -147,7 +128,6 @@ export function BuscarTipoPopup({
           setCarregando(false);
         }
       };
-
       buscarTodosTipos();
     }
   }, [open]);

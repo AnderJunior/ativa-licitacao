@@ -1,0 +1,277 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum app_role {
+  admin
+  user
+}
+
+// ─── Auth ───────────────────────────────────────────────
+
+model users {
+  id            String            @id @default(uuid()) @db.Uuid
+  email         String            @unique
+  password_hash String
+  full_name     String?
+  cpf           String?
+  role          app_role          @default(user)
+  created_at    DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime          @default(now()) @updatedAt @db.Timestamptz(6)
+  permissoes    user_permissoes[]
+  contratacoes  contratacoes[]    @relation("cadastrado_por")
+}
+
+// ─── Permissões ─────────────────────────────────────────
+
+model menus {
+  id              String            @id @default(uuid()) @db.Uuid
+  nome            String
+  path            String?
+  ordem           Int               @default(0)
+  parent_id       String?           @db.Uuid
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  parent          menus?            @relation("menus_parent", fields: [parent_id], references: [id])
+  children        menus[]           @relation("menus_parent")
+  user_permissoes user_permissoes[]
+}
+
+model user_permissoes {
+  id         String   @id @default(uuid()) @db.Uuid
+  user_id    String   @db.Uuid
+  menu_id    String   @db.Uuid
+  abrir      Boolean  @default(false)
+  salvar     Boolean  @default(false)
+  excluir    Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  user       users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  menu       menus    @relation(fields: [menu_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, menu_id])
+}
+
+// ─── Licitações ─────────────────────────────────────────
+
+model contratacoes {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  cd_pn                    String?                 @unique
+  cadastrado               Boolean?                @default(false)
+  cadastrado_por           String?                 @db.Uuid
+  enviada                  Boolean?                @default(false)
+  ano_compra               Int?
+  cnpj                     String?
+  complemento              String?
+  conteudo                 String?
+  descricao_modalidade     String?                 @db.Uuid
+  dt_alterado_ativa        String?
+  dt_atualizacao           String?
+  dt_criacao               String?
+  dt_encerramento_proposta String?
+  dt_importacao            String?
+  dt_publicacao            String?
+  dt_vigencia_ini          String?
+  dt_vinculo_ativa         String?
+  esfera                   String?
+  id_codigo_modalidade     Int?
+  link_processo            String?
+  links                    String[]
+  modalidade               String?
+  modalidade_ativa         String?
+  municipio                String?
+  num_ativa                String?
+  num_licitacao            String?
+  ordem                    Int?
+  orgao_pncp               String?
+  poder                    String?
+  regiao                   String?
+  sequencial_compra        Int?
+  textos_cadastro_manual   String?
+  tipo_cadastro            String?
+  titulo                   String?
+  uf                       String?
+  un_cod                   String?
+  unidade                  String?
+  valor_estimado           Float?
+  created_at               DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  tipo_licitacao           tipo_licitacoes?         @relation(fields: [descricao_modalidade], references: [id])
+  user                     users?                  @relation("cadastrado_por", fields: [cadastrado_por], references: [id])
+  marcacoes                contratacoes_marcacoes[]
+}
+
+model contratacoes_marcacoes {
+  id             String             @id @default(uuid()) @db.Uuid
+  contratacao_id String             @db.Uuid
+  ramo_id        String             @db.Uuid
+  created_at     DateTime           @default(now()) @db.Timestamptz(6)
+  contratacao    contratacoes       @relation(fields: [contratacao_id], references: [id], onDelete: Cascade)
+  ramo           ramos_de_atividade @relation(fields: [ramo_id], references: [id], onDelete: Cascade)
+
+  @@unique([contratacao_id, ramo_id])
+}
+
+model tipo_licitacoes {
+  id           String         @id @default(uuid()) @db.Uuid
+  sigla        String
+  descricao    String?
+  created_at   DateTime       @default(now()) @db.Timestamptz(6)
+  contratacoes contratacoes[]
+}
+
+// ─── Atividades ─────────────────────────────────────────
+
+model ramos_de_atividade {
+  id                         String                       @id @default(uuid()) @db.Uuid
+  nome                       String
+  e_grupo                    Boolean?                     @default(false)
+  grupo_relacionado          String?
+  palavras_chaves            String[]
+  parent_id                  String?                      @db.Uuid
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  parent                     ramos_de_atividade?          @relation("ramos_parent", fields: [parent_id], references: [id])
+  children                   ramos_de_atividade[]         @relation("ramos_parent")
+  contratacoes_marcacoes     contratacoes_marcacoes[]
+  clientes_perfis_atividades clientes_perfis_atividades[]
+}
+
+// ─── Órgãos ─────────────────────────────────────────────
+
+model orgaos {
+  id            String          @id @default(uuid()) @db.Uuid
+  nome_orgao    String
+  uf            String?
+  cidade_ibge   String?
+  endereco      String?
+  telefone      String?
+  emails        String[]
+  sites         String[]
+  observacoes   String?
+  obs_pncp      String?
+  compras_net   String?
+  compras_mg    String?
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+  orgaos_grupos orgaos_grupos[]
+}
+
+model grupo_de_orgaos {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  nome                   String
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  orgaos_grupos          orgaos_grupos[]
+  clientes_grupos_orgaos clientes_grupos_orgaos[]
+}
+
+model orgaos_grupos {
+  id         String          @id @default(uuid()) @db.Uuid
+  orgao_id   String          @db.Uuid
+  grupo_id   String          @db.Uuid
+  created_at DateTime        @default(now()) @db.Timestamptz(6)
+  orgao      orgaos          @relation(fields: [orgao_id], references: [id], onDelete: Cascade)
+  grupo      grupo_de_orgaos @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
+}
+
+model orgaos_vinculados {
+  id         String   @id @default(uuid()) @db.Uuid
+  cnpj       String
+  orgao_id   String?  @db.Uuid
+  orgao_nome String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+}
+
+// ─── Clientes ───────────────────────────────────────────
+
+model clientes {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  nome                   String
+  contato                String?
+  fone                   String?
+  fax                    String?
+  endereco               String?
+  bairro                 String?
+  cidade                 String?
+  uf                     String?
+  cep                    String?
+  cnpj                   String?
+  cpf                    String?
+  cod_interno            String?
+  obs                    String?
+  cliente_ativo          Boolean                  @default(true)
+  cortesia_bloqueio      DateTime?                @db.Date
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
+  alterado_por           String?
+  emails                 clientes_emails[]
+  perfis                 clientes_perfis[]
+  grupos_orgaos          clientes_grupos_orgaos[]
+}
+
+model clientes_emails {
+  id         String   @id @default(uuid()) @db.Uuid
+  cliente_id String   @db.Uuid
+  email      String
+  tipo       String   @default("Email")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  cliente    clientes @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+}
+
+model clientes_perfis {
+  id         String                       @id @default(uuid()) @db.Uuid
+  cliente_id String                       @db.Uuid
+  nome       String                       @default("A")
+  created_at DateTime                     @default(now()) @db.Timestamptz(6)
+  cliente    clientes                     @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  ufs        clientes_perfis_ufs[]
+  atividades clientes_perfis_atividades[]
+}
+
+model clientes_perfis_ufs {
+  id        String          @id @default(uuid()) @db.Uuid
+  perfil_id String          @db.Uuid
+  uf        String
+  perfil    clientes_perfis @relation(fields: [perfil_id], references: [id], onDelete: Cascade)
+
+  @@unique([perfil_id, uf])
+}
+
+model clientes_perfis_atividades {
+  id        String             @id @default(uuid()) @db.Uuid
+  perfil_id String             @db.Uuid
+  ramo_id   String             @db.Uuid
+  perfil    clientes_perfis    @relation(fields: [perfil_id], references: [id], onDelete: Cascade)
+  ramo      ramos_de_atividade @relation(fields: [ramo_id], references: [id], onDelete: Cascade)
+
+  @@unique([perfil_id, ramo_id])
+}
+
+model clientes_grupos_orgaos {
+  id         String          @id @default(uuid()) @db.Uuid
+  cliente_id String          @db.Uuid
+  grupo_id   String          @db.Uuid
+  cliente    clientes        @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  grupo      grupo_de_orgaos @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
+
+  @@unique([cliente_id, grupo_id])
+}
+
+// ─── Outros ─────────────────────────────────────────────
+
+model caixas_email {
+  id         String   @id @default(uuid()) @db.Uuid
+  sigla      String
+  descricao  String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model sites {
+  id         String   @id @default(uuid()) @db.Uuid
+  dominio    String
+  site       String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+}

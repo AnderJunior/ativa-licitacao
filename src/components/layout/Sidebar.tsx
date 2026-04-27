@@ -17,7 +17,9 @@ import {
   Globe,
   ListTree,
   Mail,
-  Shield
+  Shield,
+  BarChart3,
+  UserCheck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -44,6 +46,7 @@ const menuItems: MenuItem[] = [
       { label: 'Consulta', path: '/licitacoes/consulta', icon: Search },
       { label: 'Tipos de Licitação', path: '/licitacoes/tipos', icon: Info },
       { label: 'Marcação Pendente', path: '/licitacoes/marcacoes-pendentes', icon: AlertCircle },
+      { label: 'Rel. Produtividade', path: '/licitacoes/relatorio-produtividade', icon: BarChart3 },
     ],
   },
   {
@@ -63,6 +66,7 @@ const menuItems: MenuItem[] = [
       { label: 'Atividades', path: '/empresa/atividades', icon: ListTree },
       { label: 'Caixas de E-mail', path: '/empresa/caixas-email', icon: Mail },
       { label: 'Permissões de Acesso', path: '/empresa/permissoes', icon: Shield },
+      { label: 'Clientes', path: '/empresa/clientes', icon: UserCheck },
     ],
   },
 ];

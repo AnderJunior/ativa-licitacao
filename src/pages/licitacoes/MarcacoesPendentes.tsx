@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Eye } from 'lucide-react';
 
@@ -38,23 +38,10 @@ export default function MarcacoesPendentes() {
 
   const buscarNomeUsuario = async (userId: string | null): Promise<string | null> => {
     if (!userId) return null;
-    
     try {
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('nome')
-        .eq('user_id', userId)
-        .maybeSingle();
-      
-      if (error) {
-        console.error('Erro ao buscar nome do usuário:', error);
-        return null;
-      }
-      
-      // @ts-ignore - A coluna nome foi adicionada manualmente pelo usuário
-      return data?.nome || null;
-    } catch (error) {
-      console.error('Erro ao buscar nome do usuário:', error);
+      const profiles = await api.get<{ user_id: string; full_name: string | null }[]>('/api/profiles', { user_ids: userId });
+      return profiles?.[0]?.full_name || null;
+    } catch {
       return null;
     }
   };
@@ -63,21 +50,15 @@ export default function MarcacoesPendentes() {
     setLoading(true);
     try {
       // Buscar contratações cadastrado=true que NÃO têm marcações e não foram enviadas
-      const { data: todasCadastradas, error: errCadastradas } = await supabase
-        .from('contratacoes')
-        .select('id, num_ativa, uf, descricao_modalidade, titulo, num_licitacao, sequencial_compra, ano_compra, orgao_pncp, dt_publicacao, dt_vinculo_ativa, cadastrado_por, dt_alterado_ativa, created_at')
-        .eq('cadastrado', true)
-        .eq('enviada', false)
-        .order('dt_publicacao', { ascending: false });
-
-      if (errCadastradas) throw errCadastradas;
+      const todasCadastradas = await api.get<any[]>('/api/contratacoes', {
+        cadastrado: 'true',
+        enviada: 'false',
+        sort: 'dt_publicacao',
+        order: 'desc',
+      });
 
       // Buscar IDs que têm marcações
-      const { data: comMarcacoes, error: errMarcacoes } = await supabase
-        .from('contratacoes_marcacoes')
-        .select('contratacao_id');
-
-      if (errMarcacoes) throw errMarcacoes;
+      const comMarcacoes = await api.get<{ contratacao_id: string }[]>('/api/contratacoes-marcacoes');
 
       const idsComMarcacoes = new Set(comMarcacoes?.map(m => m.contratacao_id) || []);
 
@@ -88,14 +69,10 @@ export default function MarcacoesPendentes() {
       const tipoIds = pendentes
         .map(c => c.descricao_modalidade)
         .filter(id => id) as string[];
-      
+
       let tiposMap = new Map();
       if (tipoIds.length > 0) {
-        const { data: tipos } = await supabase
-          .from('tipo_licitacoes')
-          .select('id, sigla, descricao')
-          .in('id', tipoIds);
-        
+        const tipos = await api.post<{ id: string; sigla: string; descricao: string | null }[]>('/api/tipo-licitacoes/by-ids', { ids: tipoIds });
         if (tipos) {
           tiposMap = new Map(tipos.map(t => [t.id, { sigla: t.sigla, descricao: t.descricao }]));
         }

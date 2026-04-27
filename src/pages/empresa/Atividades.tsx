@@ -30,7 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -99,7 +99,7 @@ export default function Atividades() {
   }, [adicionarParent, adicionarComoPai]);
 
   const loadRamos = async () => {
-    const { data } = await supabase.from('ramos_de_atividade').select('*').order('nome');
+    const data = await api.get<RamoAtividade[]>('/api/ramos-atividade').catch(() => null);
     if (data) {
       const tree = buildTree(data);
       const orderMap = new Map(
@@ -163,11 +163,7 @@ export default function Atividades() {
       .filter(Boolean);
     setPalavrasChavesSaving(true);
     try {
-      const { error } = await supabase
-        .from('ramos_de_atividade')
-        .update({ palavras_chaves: parsed })
-        .eq('id', palavrasChavesModalItem.id);
-      if (error) throw error;
+      await api.patch(`/api/ramos-atividade/${palavrasChavesModalItem.id}`, { palavras_chaves: parsed });
       setRamos(prev => updateRamoPalavrasChavesInTree(prev, palavrasChavesModalItem.id, parsed));
       setPalavrasChavesModalItem(prev => prev ? { ...prev, palavras_chaves: parsed } : null);
       toast.success('Palavras-chave atualizadas.');
@@ -187,21 +183,18 @@ export default function Atividades() {
       return;
     }
     setEditarSaving(true);
-    supabase
-      .from('ramos_de_atividade')
-      .update({ nome })
-      .eq('id', editarItem.id)
-      .then(({ error }) => {
+    api.patch(`/api/ramos-atividade/${editarItem.id}`, { nome })
+      .then(() => {
         setEditarSaving(false);
         setEditarDialogOpen(false);
         setEditarItem(null);
         setEditarNome('');
-        if (error) {
-          toast.error(error.message);
-          return;
-        }
         toast.success('Atividade atualizada.');
         loadRamos();
+      })
+      .catch((err: any) => {
+        setEditarSaving(false);
+        toast.error(err.message);
       });
   };
 
@@ -213,24 +206,22 @@ export default function Atividades() {
       return;
     }
     setAdicionarSaving(true);
-    supabase
-      .from('ramos_de_atividade')
-      .insert({
-        nome,
-        e_grupo: false,
-        grupo_relacionado: adicionarParent.nome,
-        parent_id: adicionarParent.id,
-      })
-      .then(({ error }) => {
+    api.post('/api/ramos-atividade', {
+      nome,
+      e_grupo: false,
+      grupo_relacionado: adicionarParent.nome,
+      parent_id: adicionarParent.id,
+    })
+      .then(() => {
         setAdicionarSaving(false);
         setAdicionarParent(null);
         setAdicionarNome('');
-        if (error) {
-          toast.error(error.message);
-          return;
-        }
         toast.success('Atividade adicionada.');
         loadRamos();
+      })
+      .catch((err: any) => {
+        setAdicionarSaving(false);
+        toast.error(err.message);
       });
   };
 
@@ -247,40 +238,38 @@ export default function Atividades() {
       return;
     }
     setAdicionarSaving(true);
-    supabase
-      .from('ramos_de_atividade')
-      .insert({
-        nome,
-        e_grupo: false,
-        grupo_relacionado: null,
-        parent_id: null,
-      })
-      .then(({ error }) => {
+    api.post('/api/ramos-atividade', {
+      nome,
+      e_grupo: false,
+      grupo_relacionado: null,
+      parent_id: null,
+    })
+      .then(() => {
         setAdicionarSaving(false);
         setAdicionarComoPai(false);
         setAdicionarNome('');
-        if (error) {
-          toast.error(error.message);
-          return;
-        }
         toast.success('Atividade adicionada.');
         loadRamos();
+      })
+      .catch((err: any) => {
+        setAdicionarSaving(false);
+        toast.error(err.message);
       });
   };
 
   const handleRemoverAtividade = async () => {
     if (!removerItem) return;
     setRemoverSaving(true);
-    const { error } = await supabase.from('ramos_de_atividade').delete().eq('id', removerItem.id);
+    try {
+      await api.delete(`/api/ramos-atividade/${removerItem.id}`);
+      toast.success('Atividade removida.');
+      loadRamos();
+    } catch (err: any) {
+      toast.error(err.message);
+    }
     setRemoverSaving(false);
     setRemoverDialogOpen(false);
     setRemoverItem(null);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success('Atividade removida.');
-    loadRamos();
   };
 
   const toggleRamo = (id: string) => {

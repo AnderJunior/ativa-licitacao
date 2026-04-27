@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Loader2, Save, Plus, X, ChevronsUpDown } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
 import { cn } from '@/lib/utils';
@@ -125,13 +125,21 @@ export function CadastrarOrgaoPopup({
   }, [sitePopupOpen]);
 
   const loadGrupos = async () => {
-    const { data } = await supabase.from('grupo_de_orgaos').select('*').order('nome');
-    if (data) setGrupos(data);
+    try {
+      const data = await api.get<GrupoOrgao[]>('/api/grupo-orgaos');
+      if (data) setGrupos(data);
+    } catch {
+      // silently fail
+    }
   };
 
   const loadSites = async () => {
-    const { data } = await supabase.from('sites').select('*').order('dominio');
-    if (data) setSites(data);
+    try {
+      const data = await api.get<Site[]>('/api/sites');
+      if (data) setSites(data);
+    } catch {
+      // silently fail
+    }
   };
 
   const handleSelectCidade = (uf: string, cidadeId: string, cidadeNome: string) => {
@@ -220,29 +228,24 @@ export function CadastrarOrgaoPopup({
 
     setSaving(true);
     try {
-      const { data, error } = await supabase
-        .from('orgaos')
-        .insert({
-          nome_orgao: formData.nome_orgao,
-          uf: formData.uf || null,
-          cidade_ibge: formData.cidade_ibge || null,
-          compras_net: formData.compras_net || null,
-          compras_mg: formData.compras_mg || null,
-          emails: formData.emails || [],
-          sites: formData.sites || [],
-          observacoes: formData.observacoes || null,
-          obs_pncp: formData.obs_pncp || null,
-        })
-        .select('id')
-        .single();
-      
-      if (error) throw error;
+      const payload = {
+        nome_orgao: formData.nome_orgao,
+        uf: formData.uf || null,
+        cidade_ibge: formData.cidade_ibge || null,
+        compras_net: formData.compras_net || null,
+        compras_mg: formData.compras_mg || null,
+        emails: formData.emails || [],
+        sites: formData.sites || [],
+        observacoes: formData.observacoes || null,
+        obs_pncp: formData.obs_pncp || null,
+      };
+
+      const data = await api.post<{ id: string }>('/api/orgaos', payload);
 
       // Sincronizar grupo
-      if (data.id && selectedGrupo) {
-        await supabase.from('orgaos_grupos').insert({
-          orgao_id: data.id,
-          grupo_id: selectedGrupo,
+      if (data.id) {
+        await api.put('/api/orgaos/' + data.id + '/grupos', {
+          grupo_ids: selectedGrupo ? [selectedGrupo] : [],
         });
       }
 
@@ -253,7 +256,7 @@ export function CadastrarOrgaoPopup({
         if (existingSiteUrls.has(url)) continue;
         try {
           const hostname = new URL(url).hostname || 'Link personalizado';
-          await supabase.from('sites').insert({ dominio: hostname, site: url });
+          await api.post('/api/sites', { dominio: hostname, site: url });
           existingSiteUrls.add(url);
         } catch {
           // URL inválida, ignora

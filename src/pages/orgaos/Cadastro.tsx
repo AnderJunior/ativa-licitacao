@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft } from 'lucide-react';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
@@ -94,13 +94,21 @@ export default function OrgaoCadastro() {
   }, [sitePopupOpen]);
 
   const loadGrupos = async () => {
-    const { data } = await supabase.from('grupo_de_orgaos').select('*').order('nome');
-    if (data) setGrupos(data);
+    try {
+      const data = await api.get<GrupoOrgao[]>('/api/grupo-orgaos');
+      if (data) setGrupos(data);
+    } catch {
+      // silently fail
+    }
   };
 
   const loadSites = async () => {
-    const { data } = await supabase.from('sites').select('*').order('dominio');
-    if (data) setSites(data);
+    try {
+      const data = await api.get<Site[]>('/api/sites');
+      if (data) setSites(data);
+    } catch {
+      // silently fail
+    }
   };
 
   const handleSelectCidade = (uf: string, cidadeId: string, cidadeNome: string) => {
@@ -114,38 +122,39 @@ export default function OrgaoCadastro() {
 
   const loadOrgao = async (id: string) => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('orgaos')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
+    try {
+      const data = await api.get<Orgao>('/api/orgaos/' + id);
 
-    if (data) {
-      setFormData(data);
-      
-      // Carregar nome da cidade se tiver UF e cidade_ibge
-      if (data.uf && data.cidade_ibge) {
-        try {
-          const response = await fetch(
-            `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${data.cidade_ibge}`
-          );
-          const municipio = await response.json();
-          if (municipio && municipio.nome) {
-            setCidadeDisplay(`${data.uf} - ${municipio.nome}`);
+      if (data) {
+        setFormData(data);
+
+        // Carregar nome da cidade se tiver UF e cidade_ibge
+        if (data.uf && data.cidade_ibge) {
+          try {
+            const response = await fetch(
+              `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${data.cidade_ibge}`
+            );
+            const municipio = await response.json();
+            if (municipio && municipio.nome) {
+              setCidadeDisplay(`${data.uf} - ${municipio.nome}`);
+            }
+          } catch (error) {
+            console.error('Erro ao carregar nome da cidade:', error);
           }
-        } catch (error) {
-          console.error('Erro ao carregar nome da cidade:', error);
+        }
+
+        // Carregar grupos vinculados
+        try {
+          const grupoIds = await api.get<string[]>('/api/orgaos/' + id + '/grupos');
+          if (grupoIds && grupoIds.length > 0) {
+            setSelectedGrupo(grupoIds[0]);
+          }
+        } catch {
+          // silently fail
         }
       }
-      
-      // Carregar grupos vinculados
-      const { data: vinculos } = await supabase
-        .from('orgaos_grupos')
-        .select('grupo_id')
-        .eq('orgao_id', id);
-      if (vinculos && vinculos.length > 0) {
-        setSelectedGrupo(vinculos[0].grupo_id);
-      }
+    } catch {
+      // silently fail
     }
     setLoading(false);
   };
@@ -170,52 +179,30 @@ export default function OrgaoCadastro() {
     try {
       let orgaoIdToUse = orgaoId;
 
+      const payload = {
+        nome_orgao: formData.nome_orgao,
+        uf: formData.uf || null,
+        cidade_ibge: formData.cidade_ibge || null,
+        compras_net: formData.compras_net || null,
+        compras_mg: formData.compras_mg || null,
+        emails: formData.emails || [],
+        sites: formData.sites || [],
+        observacoes: formData.observacoes || null,
+        obs_pncp: formData.obs_pncp || null,
+      };
+
       if (orgaoId) {
-        const { error } = await supabase
-          .from('orgaos')
-          .update({
-            nome_orgao: formData.nome_orgao,
-            uf: formData.uf || null,
-            cidade_ibge: formData.cidade_ibge || null,
-            compras_net: formData.compras_net || null,
-            compras_mg: formData.compras_mg || null,
-            emails: formData.emails || [],
-            sites: formData.sites || [],
-            observacoes: formData.observacoes || null,
-            obs_pncp: formData.obs_pncp || null,
-          })
-          .eq('id', orgaoId);
-        if (error) throw error;
+        await api.put('/api/orgaos/' + orgaoId, payload);
       } else {
-        const { data, error } = await supabase
-          .from('orgaos')
-          .insert({
-            nome_orgao: formData.nome_orgao,
-            uf: formData.uf || null,
-            cidade_ibge: formData.cidade_ibge || null,
-            compras_net: formData.compras_net || null,
-            compras_mg: formData.compras_mg || null,
-            emails: formData.emails || [],
-            sites: formData.sites || [],
-            observacoes: formData.observacoes || null,
-            obs_pncp: formData.obs_pncp || null,
-          })
-          .select('id')
-          .single();
-        if (error) throw error;
+        const data = await api.post<{ id: string }>('/api/orgaos', payload);
         orgaoIdToUse = data.id;
       }
 
       // Sincronizar grupo
       if (orgaoIdToUse) {
-        await supabase.from('orgaos_grupos').delete().eq('orgao_id', orgaoIdToUse);
-
-        if (selectedGrupo) {
-          await supabase.from('orgaos_grupos').insert({
-            orgao_id: orgaoIdToUse,
-            grupo_id: selectedGrupo,
-          });
-        }
+        await api.put('/api/orgaos/' + orgaoIdToUse + '/grupos', {
+          grupo_ids: selectedGrupo ? [selectedGrupo] : [],
+        });
       }
 
       // Persistir links personalizados na tabela sites (para URLs que ainda não existem)
@@ -225,7 +212,7 @@ export default function OrgaoCadastro() {
         if (existingSiteUrls.has(url)) continue;
         try {
           const hostname = new URL(url).hostname || 'Link personalizado';
-          await supabase.from('sites').insert({ dominio: hostname, site: url });
+          await api.post('/api/sites', { dominio: hostname, site: url });
           existingSiteUrls.add(url);
         } catch {
           // URL inválida, ignora

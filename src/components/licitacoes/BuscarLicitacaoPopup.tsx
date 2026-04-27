@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { X, Search, Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
 interface LicitacaoEncontrada {
@@ -72,16 +72,11 @@ export function BuscarLicitacaoPopup({
     setBuscando(true);
     try {
       // Busca a licitação pelo num_ativa e created_at no mês/ano específico
-      // Usa limit(1) para garantir que só retorna uma linha, mesmo que haja múltiplas
-      const { data: licitacoes, error } = await supabase
-        .from('contratacoes')
-        .select('*')
-        .eq('num_ativa', numAtiva)
-        .gte('created_at', inicioMes)
-        .lt('created_at', proximoMes)
-        .limit(1);
-
-      if (error) throw error;
+      const licitacoes = await api.get<LicitacaoEncontrada[]>('/api/contratacoes', {
+        num_ativa: numAtiva,
+        created_at_gte: inicioMes,
+        created_at_lte: proximoMes,
+      });
 
       if (!licitacoes || licitacoes.length === 0) {
         toast.error('Licitação não encontrada com este número de controle');
@@ -91,22 +86,21 @@ export function BuscarLicitacaoPopup({
       const licitacao = licitacoes[0];
 
       // Busca as marcações de ramos de atividade
-      const { data: marcacoes } = await supabase
-        .from('contratacoes_marcacoes')
-        .select('ramo_id')
-        .eq('contratacao_id', licitacao.id);
+      const marcacoes = await api.get<{ ramo_id: string }[]>(
+        `/api/contratacoes/${licitacao.id}/marcacoes`
+      );
 
       const ramosIds = marcacoes?.map(m => m.ramo_id) || [];
 
       // Retorna os dados encontrados
-      onLicitacaoEncontrada(licitacao as LicitacaoEncontrada, ramosIds);
+      onLicitacaoEncontrada(licitacao, ramosIds);
       toast.success('Licitação encontrada!');
-      
+
       // Fecha o popup e limpa o campo
       setNumeroControle('');
       onOpenChange(false);
-    } catch (error: any) {
-      toast.error('Erro ao buscar: ' + error.message);
+    } catch (err: any) {
+      toast.error('Erro ao buscar: ' + err.message);
     } finally {
       setBuscando(false);
     }

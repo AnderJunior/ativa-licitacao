@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
+import { api } from '@/lib/api';
 
 interface PermissoesContextType {
   isAdmin: boolean;
@@ -10,16 +10,22 @@ interface PermissoesContextType {
   loading: boolean;
 }
 
-interface MenuRecord {
-  id: string;
-  path: string | null;
-}
-
-interface PermissaoRecord {
+interface PermissaoFromApi {
   menu_id: string;
+  menu_path: string;
+  menu_nome: string;
   abrir: boolean;
   salvar: boolean;
   excluir: boolean;
+}
+
+interface MeResponse {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+  isAdmin: boolean;
+  permissoes: PermissaoFromApi[];
 }
 
 const PermissoesContext = createContext<PermissoesContextType | undefined>(undefined);
@@ -27,8 +33,7 @@ const PermissoesContext = createContext<PermissoesContextType | undefined>(undef
 export function PermissoesProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
-  const [menus, setMenus] = useState<MenuRecord[]>([]);
-  const [permissoes, setPermissoes] = useState<PermissaoRecord[]>([]);
+  const [permissoes, setPermissoes] = useState<PermissaoFromApi[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
@@ -36,13 +41,12 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) {
       setIsAdmin(false);
-      setMenus([]);
       setPermissoes([]);
       setLoading(false);
       setLoadedUserId(null);
       return;
     }
-    // Não recarregar se já carregou para este mesmo usuário
+    // Nao recarregar se ja carregou para este mesmo usuario
     if (loadedUserId === user.id) return;
     loadPermissoes(user.id);
   }, [user?.id]);
@@ -50,51 +54,35 @@ export function PermissoesProvider({ children }: { children: ReactNode }) {
   const loadPermissoes = async (userId: string) => {
     setLoading(true);
     try {
-      const [rolesRes, menusRes, permRes] = await Promise.all([
-        supabase.from('user_roles').select('role').eq('user_id', userId),
-        supabase.from('menus').select('id, path'),
-        supabase.from('user_permissoes').select('menu_id, abrir, salvar, excluir').eq('user_id', userId),
-      ]);
-
-      const roles = rolesRes.data || [];
-      setIsAdmin(roles.some((r) => r.role === 'admin'));
-      setMenus(menusRes.data || []);
-      setPermissoes(permRes.data || []);
+      const data = await api.get<MeResponse>('/api/auth/me');
+      setIsAdmin(data.isAdmin);
+      setPermissoes(data.permissoes || []);
     } catch {
-      // fallback: sem permissões
+      // fallback: sem permissoes
+      setIsAdmin(false);
+      setPermissoes([]);
     }
     setLoadedUserId(userId);
     setLoading(false);
   };
 
-  const getMenuIdByPath = (path: string): string | null => {
-    const menu = menus.find((m) => m.path === path);
-    return menu?.id || null;
-  };
-
   const canAbrir = (path: string): boolean => {
     if (isAdmin) return true;
-    // Permissões de Acesso sempre acessível para quem já está logado (admin controla)
+    // Permissoes de Acesso sempre acessivel apenas para admin
     if (path === '/empresa/permissoes') return false;
-    const menuId = getMenuIdByPath(path);
-    if (!menuId) return false;
-    const perm = permissoes.find((p) => p.menu_id === menuId);
+    const perm = permissoes.find((p) => p.menu_path === path);
     return perm?.abrir ?? false;
   };
 
   const canSalvar = (path: string): boolean => {
     if (isAdmin) return true;
-    const menuId = getMenuIdByPath(path);
-    if (!menuId) return false;
-    const perm = permissoes.find((p) => p.menu_id === menuId);
+    const perm = permissoes.find((p) => p.menu_path === path);
     return perm?.salvar ?? false;
   };
 
   const canExcluir = (path: string): boolean => {
     if (isAdmin) return true;
-    const menuId = getMenuIdByPath(path);
-    if (!menuId) return false;
-    const perm = permissoes.find((p) => p.menu_id === menuId);
+    const perm = permissoes.find((p) => p.menu_path === path);
     return perm?.excluir ?? false;
   };
 

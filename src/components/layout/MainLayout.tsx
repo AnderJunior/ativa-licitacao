@@ -51,7 +51,7 @@ export function MainLayout({ children }: MainLayoutProps) {
               {userName}
             </span>
             <Avatar className="h-8 w-8 border border-gray-200">
-              <AvatarImage src={user?.user_metadata?.avatar_url} alt={userName} />
+              <AvatarImage src={undefined} alt={userName} />
               <AvatarFallback className="bg-gray-200 text-gray-600 text-xs font-medium">
                 {userInitials}
               </AvatarFallback>

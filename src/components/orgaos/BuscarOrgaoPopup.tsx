@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { CadastrarOrgaoPopup } from './CadastrarOrgaoPopup';
 
@@ -109,40 +109,13 @@ export function BuscarOrgaoPopup({
   const buscarOrgaos = useCallback(async () => {
     setCarregando(true);
     try {
-      let query = supabase
-        .from('orgaos')
-        .select('id, nome_orgao, uf, cidade_ibge, endereco, telefone, compras_net, compras_mg')
-        .order('nome_orgao');
+      const params: Record<string, string> = {};
+      if (filtroOrgao.trim()) params.search = filtroOrgao.trim().replace(/%/g, '');
+      if (filtroUASG.trim()) params.compras = filtroUASG.trim().replace(/%/g, '');
+      if (filtroUF) params.uf = filtroUF;
+      if (filtroFone.trim()) params.telefone = filtroFone.trim().replace(/%/g, '');
 
-      // Aplica filtros com suporte a %
-      if (filtroOrgao.trim()) {
-        const filtro = filtroOrgao.trim().replace(/%/g, '');
-        query = query.ilike('nome_orgao', `%${filtro}%`);
-      }
-
-      if (filtroUASG.trim()) {
-        const filtro = filtroUASG.trim().replace(/%/g, '');
-        query = query.or(`compras_net.ilike.%${filtro}%,compras_mg.ilike.%${filtro}%`);
-      }
-
-      // Não aplica filtro de cidade aqui - será aplicado depois de buscar os nomes das cidades
-      if (filtroUF) {
-        query = query.eq('uf', filtroUF);
-      }
-
-      if (filtroFone.trim()) {
-        const filtro = filtroFone.trim().replace(/%/g, '');
-        query = query.ilike('telefone', `%${filtro}%`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('Erro ao buscar órgãos:', error);
-        toast.error('Erro ao buscar órgãos. Tente novamente.');
-        setOrgaos([]);
-        return;
-      }
+      const data = await api.get<Orgao[]>('/api/orgaos', params);
 
       // Buscar nomes das cidades usando a API do IBGE
       const orgaosComCidade = await Promise.all(

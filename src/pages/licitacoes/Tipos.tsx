@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -33,15 +33,11 @@ export default function LicitacaoTipos() {
 
   const loadTipos = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('tipo_licitacoes')
-      .select('*')
-      .order('sigla');
-    
-    if (error) {
-      toast.error('Erro ao carregar tipos');
-    } else {
+    try {
+      const data = await api.get<TipoLicitacao[]>('/api/tipo-licitacoes');
       setTipos(data || []);
+    } catch {
+      toast.error('Erro ao carregar tipos');
     }
     setLoading(false);
   };
@@ -53,33 +49,26 @@ export default function LicitacaoTipos() {
     }
 
     setSaving(true);
-    const { error } = await supabase
-      .from('tipo_licitacoes')
-      .insert({ sigla: newSigla.trim().toUpperCase(), descricao: newDescricao.trim() || null });
-
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('Esta sigla já existe');
-      } else {
-        toast.error('Erro ao adicionar: ' + error.message);
-      }
-    } else {
+    try {
+      await api.post('/api/tipo-licitacoes', { sigla: newSigla.trim().toUpperCase(), descricao: newDescricao.trim() || undefined });
       toast.success('Tipo adicionado!');
       setNewSigla('');
       setNewDescricao('');
       setDialogOpen(false);
       loadTipos();
+    } catch (err: any) {
+      toast.error(err.message?.includes('Unique') ? 'Esta sigla já existe' : ('Erro ao adicionar: ' + err.message));
     }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('tipo_licitacoes').delete().eq('id', id);
-    if (error) {
-      toast.error('Erro ao excluir: ' + error.message);
-    } else {
+    try {
+      await api.delete(`/api/tipo-licitacoes/${id}`);
       toast.success('Tipo excluído!');
       loadTipos();
+    } catch (err: any) {
+      toast.error('Erro ao excluir: ' + err.message);
     }
   };
 

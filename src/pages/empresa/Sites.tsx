@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Pencil, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -62,8 +62,10 @@ export default function Sites() {
   }, [filtroDominio, filtroSite, filtroOrgao, allSites]);
 
   const loadOrgaos = async () => {
-    const { data } = await supabase.from('orgaos').select('id, nome_orgao').order('nome_orgao');
-    if (data) setOrgaos(data);
+    try {
+      const data = await api.get<Orgao[]>('/api/orgaos');
+      setOrgaos(data);
+    } catch { /* ignore */ }
   };
 
   const applyFilters = () => {
@@ -90,15 +92,11 @@ export default function Sites() {
 
   const loadSites = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('sites')
-      .select('*')
-      .order('dominio');
-    
-    if (error) {
-      toast.error('Erro ao carregar sites');
-    } else {
+    try {
+      const data = await api.get<Site[]>('/api/sites');
       setAllSites(data || []);
+    } catch {
+      toast.error('Erro ao carregar sites');
     }
     setLoading(false);
   };
@@ -148,32 +146,25 @@ export default function Sites() {
     }
 
     setSaving(true);
-    const { error } = await supabase
-      .from('sites')
-      .insert({ dominio: parsed.dominio, site: parsed.site });
-
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('Este domínio já existe');
-      } else {
-        toast.error('Erro ao adicionar: ' + error.message);
-      }
-    } else {
+    try {
+      await api.post('/api/sites', { dominio: parsed.dominio, site: parsed.site });
       toast.success('Site adicionado!');
       setNewSiteInput('');
       setDialogOpen(false);
       loadSites();
+    } catch (err: any) {
+      toast.error(err.message?.includes('Unique') ? 'Este domínio já existe' : ('Erro ao adicionar: ' + err.message));
     }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('sites').delete().eq('id', id);
-    if (error) {
-      toast.error('Erro ao excluir: ' + error.message);
-    } else {
+    try {
+      await api.delete(`/api/sites/${id}`);
       toast.success('Site excluído!');
       loadSites();
+    } catch (err: any) {
+      toast.error('Erro ao excluir: ' + err.message);
     }
   };
 
@@ -203,21 +194,13 @@ export default function Sites() {
     }
 
     setSavingEdit(true);
-    const { error } = await supabase
-      .from('sites')
-      .update({ dominio: parsed.dominio, site: parsed.site })
-      .eq('id', editingSite.id);
-
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('Este domínio já existe');
-      } else {
-        toast.error('Erro ao atualizar: ' + error.message);
-      }
-    } else {
+    try {
+      await api.put(`/api/sites/${editingSite.id}`, { dominio: parsed.dominio, site: parsed.site });
       toast.success('Site atualizado!');
       closeEditDialog();
       loadSites();
+    } catch (err: any) {
+      toast.error(err.message?.includes('Unique') ? 'Este domínio já existe' : ('Erro ao atualizar: ' + err.message));
     }
     setSavingEdit(false);
   };

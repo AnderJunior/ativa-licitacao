@@ -11,7 +11,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/contexts/PermissoesContext';
 import { toast } from 'sonner';
@@ -628,14 +628,15 @@ export default function LicitacaoCadastro() {
 
     const timerId = setTimeout(async () => {
       const licitacaoIdAtual = formData.id || contratacaoId || null;
-      const { data: licitacoesCandidatas, error } = await supabase
-        .from('contratacoes')
-        .select('id, orgao_pncp, num_ativa, created_at, titulo, municipio, uf, unidade, un_cod, modalidade, num_licitacao, conteudo, valor_estimado, dt_encerramento_proposta, dt_atualizacao')
-        .eq('descricao_modalidade', tipoId)
-        .eq('ano_compra', anoCompra);
-
-      if (error) {
-        console.error('Erro ao verificar duplicidade:', error);
+      let licitacoesCandidatas: any[] | null = null;
+      try {
+        licitacoesCandidatas = await api.get<any[]>('/api/contratacoes', {
+          descricao_modalidade: tipoId,
+          ano_compra: String(anoCompra),
+          select: 'id,orgao_pncp,num_ativa,created_at,titulo,municipio,uf,unidade,un_cod,modalidade,num_licitacao,conteudo,valor_estimado,dt_encerramento_proposta,dt_atualizacao',
+        });
+      } catch (err) {
+        console.error('Erro ao verificar duplicidade:', err);
         return;
       }
 
@@ -949,24 +950,36 @@ export default function LicitacaoCadastro() {
   }, [ramos]);
 
   const loadTipos = async () => {
-    const { data } = await supabase.from('tipo_licitacoes').select('*').order('sigla');
-    if (data) setTipos(data);
+    try {
+      const data = await api.get<TipoLicitacao[]>('/api/tipo-licitacoes');
+      if (data) setTipos(data);
+    } catch (err) {
+      console.error('Erro ao carregar tipos:', err);
+    }
   };
 
   const loadOrgaos = async () => {
-    const { data } = await supabase.from('orgaos').select('id, nome_orgao, compras_net, compras_mg').order('nome_orgao');
-    if (data) setOrgaos(data);
+    try {
+      const data = await api.get<Orgao[]>('/api/orgaos');
+      if (data) setOrgaos(data);
+    } catch (err) {
+      console.error('Erro ao carregar órgãos:', err);
+    }
   };
 
   const loadRamos = async () => {
-    const { data } = await supabase.from('ramos_de_atividade').select('*').order('nome');
-    if (data) {
-      const tree = buildTree(data);
-      const orderMap = new Map(
-        ORDEM_ARVORE_ATIVIDADES.map((nome, i) => [nome.trim().toLowerCase(), i])
-      );
-      sortTreeByDocumentOrder(tree, orderMap);
-      setRamos(tree);
+    try {
+      const data = await api.get<RamoAtividade[]>('/api/ramos-atividade');
+      if (data) {
+        const tree = buildTree(data);
+        const orderMap = new Map(
+          ORDEM_ARVORE_ATIVIDADES.map((nome, i) => [nome.trim().toLowerCase(), i])
+        );
+        sortTreeByDocumentOrder(tree, orderMap);
+        setRamos(tree);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar ramos:', err);
     }
   };
 
@@ -1033,11 +1046,7 @@ export default function LicitacaoCadastro() {
       .filter(Boolean);
     setPalavrasChavesSaving(true);
     try {
-      const { error } = await supabase
-        .from('ramos_de_atividade')
-        .update({ palavras_chaves: parsed })
-        .eq('id', palavrasChavesModalItem.id);
-      if (error) throw error;
+      await api.patch('/api/ramos-atividade/' + palavrasChavesModalItem.id, { palavras_chaves: parsed });
       setRamos(prev => updateRamoPalavrasChavesInTree(prev, palavrasChavesModalItem.id, parsed));
       setPalavrasChavesModalItem(prev => prev ? { ...prev, palavras_chaves: parsed } : null);
       toast.success('Palavras-chave atualizadas.');
@@ -1119,21 +1128,10 @@ export default function LicitacaoCadastro() {
 
   const buscarNomeUsuario = async (userId: string | null): Promise<string | null> => {
     if (!userId) return null;
-    
+
     try {
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('nome')
-        .eq('user_id', userId)
-        .maybeSingle();
-      
-      if (error) {
-        console.error('Erro ao buscar nome do usuário:', error);
-        return null;
-      }
-      
-      // @ts-ignore - A coluna nome foi adicionada manualmente pelo usuário
-      return data?.nome || null;
+      const profiles = await api.get<{ user_id: string; full_name: string }[]>('/api/profiles', { user_ids: userId });
+      return profiles?.[0]?.full_name || null;
     } catch (error) {
       console.error('Erro ao buscar nome do usuário:', error);
       return null;
@@ -1153,11 +1151,12 @@ export default function LicitacaoCadastro() {
       setSearchParams(newSearchParams, { replace: true });
     }
     
-    const { data, error } = await supabase
-      .from('contratacoes')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
+    let data: any = null;
+    try {
+      data = await api.get<any>('/api/contratacoes/' + id);
+    } catch (err) {
+      console.error('Erro ao carregar contratação:', err);
+    }
 
     if (data) {
       // Se for cadastro Manual, usa o conteúdo diretamente sem formatação
@@ -1305,12 +1304,13 @@ export default function LicitacaoCadastro() {
       // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
       setRevisao(data.cadastrado === true && data.enviada === true);
       // Load marcações
-      const { data: marcacoes } = await supabase
-        .from('contratacoes_marcacoes')
-        .select('ramo_id')
-        .eq('contratacao_id', id);
-      if (marcacoes) {
-        setSelectedRamos(marcacoes.map(m => m.ramo_id));
+      try {
+        const marcacoes = await api.get<{ ramo_id: string; ramo: { id: string; nome: string } }[]>('/api/contratacoes/' + id + '/marcacoes');
+        if (marcacoes) {
+          setSelectedRamos(marcacoes.map(m => m.ramo_id));
+        }
+      } catch (err) {
+        console.error('Erro ao carregar marcações:', err);
       }
     }
     setLoading(false);
@@ -1338,21 +1338,16 @@ export default function LicitacaoCadastro() {
     try {
       // Busca a primeira licitação não cadastrada da UF selecionada
       // Ordena por created_at ascendente (mais antiga primeiro)
-      const { data, error } = await supabase
-        .from('contratacoes')
-        .select('id')
-        .eq('uf', ufSelecionada)
-        .eq('cadastrado', false)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+      const results = await api.get<{ id: string }[]>('/api/contratacoes', {
+        uf: ufSelecionada,
+        cadastrado: 'false',
+        sort: 'created_at',
+        order: 'asc',
+        limit: '1',
+        select: 'id',
+      });
 
-      if (error) {
-        console.error('Erro ao buscar licitação:', error);
-        toast.error('Erro ao buscar licitação. Tente novamente.');
-        setLoading(false);
-        return;
-      }
+      const data = results?.[0] || null;
 
       if (!data || !data.id) {
         toast.info(`Todas as licitações do estado ${ufSelecionada} já foram cadastradas.`);
@@ -1545,12 +1540,11 @@ export default function LicitacaoCadastro() {
         // Editando licitação existente: sempre busca o tipo_cadastro original do banco
         // para garantir que nunca mude de PNCP para Manual
         const licitacaoId = formData.id || contratacaoId;
-        const { data: licitacaoOriginal } = await supabase
-          .from('contratacoes')
-          .select('tipo_cadastro')
-          .eq('id', licitacaoId)
-          .maybeSingle();
-        
+        let licitacaoOriginal: any = null;
+        try {
+          licitacaoOriginal = await api.get<any>('/api/contratacoes/' + licitacaoId);
+        } catch { /* ignore */ }
+
         // Se existe no banco e tem tipo_cadastro, sempre usa o valor do banco
         // Isso garante que se for PNCP, sempre será mantido como PNCP
         if (licitacaoOriginal?.tipo_cadastro) {
@@ -1582,22 +1576,29 @@ export default function LicitacaoCadastro() {
         dtVinculoAtiva = dataAtual;
       }
 
-      // Calcula num_ativa para cadastros manuais (apenas para novas licitações)
-      // num_ativa = quantidade total de licitações no sistema + 1
+      // Calcula num_ativa para licitações que estão sendo cadastradas (cadastrado = true)
+      // Gera num_ativa tanto para cadastros manuais quanto PNCP, desde que ainda não tenha um
+      // num_ativa = quantidade total de licitações cadastradas no sistema + 1
       let numAtivaParaSalvar: string | null = null;
-      if (isCadastroManual && !contratacaoId) {
-        // Busca a quantidade total de licitações no sistema
-        const { count, error: countError } = await supabase
-          .from('contratacoes')
-          .select('*', { count: 'exact', head: true });
-        
-        if (countError) {
+      const jaTemNumAtiva = contratacaoId
+        ? await (async () => {
+            try {
+              const orig = await api.get<any>('/api/contratacoes/' + contratacaoId);
+              return !!orig?.num_ativa;
+            } catch { return false; }
+          })()
+        : false;
+
+      if (!jaTemNumAtiva) {
+        // Gera num_ativa para qualquer licitação sendo cadastrada pela primeira vez
+        try {
+          const countResult = await api.get<{ count: number }>('/api/contratacoes', { count_only: 'true', cadastrado: 'true' });
+          // num_ativa = total de cadastrados + 1
+          const totalCadastrados = countResult?.count || 0;
+          numAtivaParaSalvar = String(totalCadastrados + 1);
+        } catch (countError) {
           console.error('Erro ao contar licitações:', countError);
           // Em caso de erro, não impede o salvamento, apenas não define num_ativa
-        } else {
-          // num_ativa = total + 1 (índice)
-          const totalLicitacoes = count || 0;
-          numAtivaParaSalvar = String(totalLicitacoes + 1);
         }
       }
 
@@ -1635,8 +1636,9 @@ export default function LicitacaoCadastro() {
         dataToSave.updated_at = dataAtual;
       }
 
-      // Adiciona num_ativa apenas para cadastros manuais (novas licitações)
-      if (numAtivaParaSalvar !== null) {
+      // Adiciona num_ativa para qualquer licitação sendo cadastrada pela primeira vez
+      // (tanto Manual quanto PNCP — o INSERT usa direto, o UPDATE trata acima)
+      if (numAtivaParaSalvar !== null && !contratacaoId) {
         dataToSave.num_ativa = numAtivaParaSalvar;
       }
 
@@ -1680,39 +1682,43 @@ export default function LicitacaoCadastro() {
       // Se tem ID (da URL ou do formData), faz UPDATE
       // Se não tem ID, faz INSERT (nova licitação)
       if (licitacaoId) {
-        // Em UPDATE, não altera num_ativa (mantém o valor original do banco)
-        // Remove num_ativa se estiver presente no dataToSave
-        delete dataToSave.num_ativa;
-        
+        // Em UPDATE, só altera num_ativa se estiver sendo gerado agora (primeira vez cadastrando)
+        if (numAtivaParaSalvar !== null) {
+          dataToSave.num_ativa = numAtivaParaSalvar;
+        } else {
+          delete dataToSave.num_ativa;
+        }
+
         // Garante que updated_at seja sempre atualizado quando cadastrado = true
         if (dataToSave.cadastrado === true) {
           dataToSave.updated_at = dataAtual;
         }
-        
-        const { error } = await supabase
-          .from('contratacoes')
-          .update(dataToSave)
-          .eq('id', licitacaoId);
-        if (error) throw error;
+
+        await api.patch('/api/contratacoes/' + licitacaoId, dataToSave);
         contratacaoIdToUse = licitacaoId;
+
+        // Atualiza o num_ativa formatado no formData se foi gerado agora
+        if (numAtivaParaSalvar !== null) {
+          const now = new Date();
+          const numAtivaFormatado = `${numAtivaParaSalvar}.${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getFullYear()).slice(-2)}`;
+          setFormData(prev => ({
+            ...prev,
+            num_ativa: numAtivaFormatado,
+          }));
+        }
       } else {
         // Garante que updated_at seja sempre atualizado quando cadastrado = true
         if (dataToSave.cadastrado === true) {
           dataToSave.updated_at = dataAtual;
         }
-        
-        const { data, error } = await supabase
-          .from('contratacoes')
-          .insert(dataToSave)
-          .select('id, created_at, num_ativa, ordem')
-          .single();
-        if (error) throw error;
+
+        const data = await api.post<any>('/api/contratacoes', dataToSave);
         contratacaoIdToUse = data.id;
         setOrdemAtual(data.ordem ?? null);
-        
+
         // Atualiza o num_ativa formatado no formData se foi calculado
-        if (data.num_ativa && isCadastroManual) {
-          const numAtivaFormatado = `${data.num_ativa}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`;
+        if (numAtivaParaSalvar !== null) {
+          const numAtivaFormatado = `${numAtivaParaSalvar}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`;
           setFormData(prev => ({
             ...prev,
             num_ativa: numAtivaFormatado,
@@ -1723,37 +1729,31 @@ export default function LicitacaoCadastro() {
         window.history.replaceState({}, '', `/licitacoes/cadastro?id=${data.id}`);
       }
 
-      // Sincronizar marcações
+      // Sincronizar marcações (a API substitui todas de uma vez)
       if (contratacaoIdToUse) {
-        await supabase
-          .from('contratacoes_marcacoes')
-          .delete()
-          .eq('contratacao_id', contratacaoIdToUse);
-
-        if (selectedRamos.length > 0) {
-          const marcacoes = selectedRamos.map(ramo_id => ({
-            contratacao_id: contratacaoIdToUse,
-            ramo_id,
-          }));
-          await supabase.from('contratacoes_marcacoes').insert(marcacoes);
-        }
+        await api.post('/api/contratacoes/' + contratacaoIdToUse + '/marcacoes', {
+          ramo_ids: selectedRamos,
+        });
       }
 
       // Persistir links personalizados na tabela sites (para URLs que ainda não existem)
       const linksToSave = formData.links || [];
       if (linksToSave.length > 0) {
-        const sb = supabase as any;
-        const { data: existingSites } = await sb.from('sites').select('site').in('site', linksToSave);
-        const existingUrls = new Set((existingSites || []).map((r: { site: string }) => r.site));
-        for (const url of linksToSave) {
-          if (existingUrls.has(url)) continue;
-          try {
-            const hostname = new URL(url).hostname || 'Link personalizado';
-            await sb.from('sites').insert({ dominio: hostname, site: url });
-            existingUrls.add(url);
-          } catch {
-            // URL inválida ou erro, ignora
+        try {
+          const existingSites = await api.post<{ site: string }[]>('/api/sites/by-urls', { urls: linksToSave });
+          const existingUrls = new Set((existingSites || []).map((r) => r.site));
+          for (const url of linksToSave) {
+            if (existingUrls.has(url)) continue;
+            try {
+              const hostname = new URL(url).hostname || 'Link personalizado';
+              await api.post('/api/sites', { dominio: hostname, site: url });
+              existingUrls.add(url);
+            } catch {
+              // URL inválida ou erro, ignora
+            }
           }
+        } catch {
+          // Erro ao verificar sites existentes, ignora
         }
       }
 
@@ -1853,11 +1853,7 @@ export default function LicitacaoCadastro() {
     if (!contratacaoId) return;
 
     try {
-      const { error } = await supabase
-        .from('contratacoes')
-        .update({ excluido: true })
-        .eq('id', contratacaoId);
-      if (error) throw error;
+      await api.patch('/api/contratacoes/' + contratacaoId, { excluido: true });
       toast.success('Licitação excluída!');
       setDeleteDialogOpen(false);
       handleNovo();
@@ -1911,22 +1907,25 @@ export default function LicitacaoCadastro() {
     setExibirPopupOpen(false);
     setLoading(true);
     try {
-      let query = supabase
-        .from('contratacoes')
-        .select('id, ordem')
-        .or('excluido.is.null,excluido.eq.false');
+      const params: Record<string, string> = {
+        hide_excluido: 'true',
+        select: 'id,ordem',
+        limit: '1',
+      };
 
       if (ordemAtual) {
         // Tem registro aberto: busca o anterior (ordem menor mais próxima)
-        query = query.lt('ordem', ordemAtual).order('ordem', { ascending: false });
+        params.ordem_lt = String(ordemAtual);
+        params.sort = 'ordem';
+        params.order = 'desc';
       } else {
         // Sem registro aberto: busca o primeiro (menor ordem)
-        query = query.order('ordem', { ascending: true });
+        params.sort = 'ordem';
+        params.order = 'asc';
       }
 
-      const { data, error } = await query.limit(1).maybeSingle();
-
-      if (error) throw error;
+      const results = await api.get<{ id: string; ordem: number }[]>('/api/contratacoes', params);
+      const data = results?.[0] || null;
 
       if (!data) {
         toast.info(ordemAtual ? 'Não há licitação anterior.' : 'Nenhuma licitação encontrada.');
@@ -1946,22 +1945,25 @@ export default function LicitacaoCadastro() {
     setExibirPopupOpen(false);
     setLoading(true);
     try {
-      let query = supabase
-        .from('contratacoes')
-        .select('id, ordem')
-        .or('excluido.is.null,excluido.eq.false');
+      const params: Record<string, string> = {
+        hide_excluido: 'true',
+        select: 'id,ordem',
+        limit: '1',
+      };
 
       if (ordemAtual) {
         // Tem registro aberto: busca o próximo (ordem maior mais próxima)
-        query = query.gt('ordem', ordemAtual).order('ordem', { ascending: true });
+        params.ordem_gt = String(ordemAtual);
+        params.sort = 'ordem';
+        params.order = 'asc';
       } else {
         // Sem registro aberto: busca o último (maior ordem)
-        query = query.order('ordem', { ascending: false });
+        params.sort = 'ordem';
+        params.order = 'desc';
       }
 
-      const { data, error } = await query.limit(1).maybeSingle();
-
-      if (error) throw error;
+      const results = await api.get<{ id: string; ordem: number }[]>('/api/contratacoes', params);
+      const data = results?.[0] || null;
 
       if (!data) {
         toast.info(ordemAtual ? 'Não há próxima licitação.' : 'Nenhuma licitação encontrada.');
@@ -2019,49 +2021,48 @@ export default function LicitacaoCadastro() {
   const handlePuxarOrgaoUltimaLicitacao = async () => {
     try {
       // Busca a última licitação cadastrada ordenando por updated_at (sempre atualizado quando cadastrado = true)
-      // Se não tiver updated_at, ordena por dt_alterado_ativa, depois por dt_vinculo_ativa, depois por created_at
-      const { data, error } = await supabase
-        .from('contratacoes')
-        .select('orgao_pncp, updated_at, dt_alterado_ativa, dt_vinculo_ativa, created_at')
-        .eq('cadastrado', true)
-        .not('orgao_pncp', 'is', null)
-        .order('updated_at', { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle();
+      const results = await api.get<{ orgao_pncp: string | null }[]>('/api/contratacoes', {
+        cadastrado: 'true',
+        orgao_pncp_not_null: 'true',
+        sort: 'updated_at',
+        order: 'desc',
+        limit: '1',
+        select: 'orgao_pncp',
+      });
 
-      if (error) throw error;
+      const data = results?.[0] || null;
 
       if (data && data.orgao_pncp && data.orgao_pncp.trim() !== '') {
         setFormData({ ...formData, orgao_pncp: data.orgao_pncp });
         toast.success('Órgão da última licitação cadastrada preenchido!');
       } else {
         // Fallback: tenta buscar por dt_alterado_ativa se não encontrou por updated_at
-        const { data: dataFallback, error: errorFallback } = await supabase
-          .from('contratacoes')
-          .select('orgao_pncp')
-          .eq('cadastrado', true)
-          .not('orgao_pncp', 'is', null)
-          .order('dt_alterado_ativa', { ascending: false, nullsFirst: false })
-          .limit(1)
-          .maybeSingle();
+        const fallbackResults = await api.get<{ orgao_pncp: string | null }[]>('/api/contratacoes', {
+          cadastrado: 'true',
+          orgao_pncp_not_null: 'true',
+          sort: 'dt_alterado_ativa',
+          order: 'desc',
+          limit: '1',
+          select: 'orgao_pncp',
+        });
 
-        if (errorFallback) throw errorFallback;
+        const dataFallback = fallbackResults?.[0] || null;
 
         if (dataFallback && dataFallback.orgao_pncp && dataFallback.orgao_pncp.trim() !== '') {
           setFormData({ ...formData, orgao_pncp: dataFallback.orgao_pncp });
           toast.success('Órgão da última licitação cadastrada preenchido!');
         } else {
           // Último fallback: busca por created_at
-          const { data: dataCreated, error: errorCreated } = await supabase
-            .from('contratacoes')
-            .select('orgao_pncp')
-            .eq('cadastrado', true)
-            .not('orgao_pncp', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          const createdResults = await api.get<{ orgao_pncp: string | null }[]>('/api/contratacoes', {
+            cadastrado: 'true',
+            orgao_pncp_not_null: 'true',
+            sort: 'created_at',
+            order: 'desc',
+            limit: '1',
+            select: 'orgao_pncp',
+          });
 
-          if (errorCreated) throw errorCreated;
+          const dataCreated = createdResults?.[0] || null;
 
           if (dataCreated && dataCreated.orgao_pncp && dataCreated.orgao_pncp.trim() !== '') {
             setFormData({ ...formData, orgao_pncp: dataCreated.orgao_pncp });

@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Pencil } from 'lucide-react';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -44,15 +44,11 @@ export default function CaixasEmail() {
 
   const loadCaixas = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('caixas_email')
-      .select('*')
-      .order('sigla');
-
-    if (error) {
-      toast.error('Erro ao carregar caixas de e-mail');
-    } else {
+    try {
+      const data = await api.get<CaixaEmail[]>('/api/caixas-email');
       setCaixas(data || []);
+    } catch {
+      toast.error('Erro ao carregar caixas de e-mail');
     }
     setLoading(false);
   };
@@ -77,33 +73,26 @@ export default function CaixasEmail() {
     }
 
     setSaving(true);
-    const { error } = await supabase
-      .from('caixas_email')
-      .insert({ sigla, descricao });
-
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('Esta sigla já existe');
-      } else {
-        toast.error('Erro ao adicionar: ' + error.message);
-      }
-    } else {
+    try {
+      await api.post('/api/caixas-email', { sigla, descricao });
       toast.success('Caixa de e-mail adicionada!');
       setSiglaInput('');
       setDescricaoInput('');
       setDialogOpen(false);
       loadCaixas();
+    } catch (err: any) {
+      toast.error(err.message?.includes('Unique') ? 'Esta sigla já existe' : ('Erro ao adicionar: ' + err.message));
     }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('caixas_email').delete().eq('id', id);
-    if (error) {
-      toast.error('Erro ao excluir: ' + error.message);
-    } else {
+    try {
+      await api.delete(`/api/caixas-email/${id}`);
       toast.success('Caixa de e-mail excluída!');
       loadCaixas();
+    } catch (err: any) {
+      toast.error('Erro ao excluir: ' + err.message);
     }
   };
 
@@ -143,21 +132,13 @@ export default function CaixasEmail() {
     }
 
     setSavingEdit(true);
-    const { error } = await supabase
-      .from('caixas_email')
-      .update({ sigla, descricao })
-      .eq('id', editingCaixa.id);
-
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('Esta sigla já existe');
-      } else {
-        toast.error('Erro ao atualizar: ' + error.message);
-      }
-    } else {
+    try {
+      await api.put(`/api/caixas-email/${editingCaixa.id}`, { sigla, descricao });
       toast.success('Caixa de e-mail atualizada!');
       closeEditDialog();
       loadCaixas();
+    } catch (err: any) {
+      toast.error(err.message?.includes('Unique') ? 'Esta sigla já existe' : ('Erro ao atualizar: ' + err.message));
     }
     setSavingEdit(false);
   };

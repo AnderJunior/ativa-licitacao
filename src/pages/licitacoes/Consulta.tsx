@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Eye, Filter, X, Download, ChevronsUpDown, Search } from 'lucide-react';
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
@@ -136,6 +136,12 @@ export default function LicitacaoConsulta() {
   const [tiposLicitacao, setTiposLicitacao] = useState<{ id: string; sigla: string; descricao: string | null }[]>([]);
   const [filtroUFConferir, setFiltroUFConferir] = useState(savedFilters?.filtroUFConferir || '');
 
+  // Modalidade layout - associação
+  const [selectedModalidade, setSelectedModalidade] = useState<string | null>(null);
+  const [associarTipoId, setAssociarTipoId] = useState('');
+  const [associarPopupOpen, setAssociarPopupOpen] = useState(false);
+  const [associarSearchTerm, setAssociarSearchTerm] = useState('');
+
   // Estados dos dropdowns com pesquisa
   const [esferaPopupOpen, setEsferaPopupOpen] = useState(false);
   const [poderPopupOpen, setPoderPopupOpen] = useState(false);
@@ -206,10 +212,7 @@ export default function LicitacaoConsulta() {
     setSelectedEnviada(c);
     setLoadingEnviadasRamos(true);
     try {
-      const { data } = await supabase
-        .from('contratacoes_marcacoes')
-        .select('ramo:ramo_id(nome)')
-        .eq('contratacao_id', c.id);
+      const data = await api.get<any[]>('/api/contratacoes/' + c.id + '/marcacoes');
       setEnviadasRamos((data || []).map((m: any) => m.ramo?.nome).filter(Boolean));
     } catch {
       setEnviadasRamos([]);
@@ -230,10 +233,7 @@ export default function LicitacaoConsulta() {
     setSelectedConferir(c);
     setLoadingConferirRamos(true);
     try {
-      const { data } = await supabase
-        .from('contratacoes_marcacoes')
-        .select('ramo:ramo_id(nome)')
-        .eq('contratacao_id', c.id);
+      const data = await api.get<any[]>('/api/contratacoes/' + c.id + '/marcacoes');
       setConferirRamos((data || []).map((m: any) => m.ramo?.nome).filter(Boolean));
     } catch {
       setConferirRamos([]);
@@ -244,7 +244,7 @@ export default function LicitacaoConsulta() {
 
   const loadVinculos = useCallback(async () => {
     try {
-      const { data } = await supabase.from('orgaos_vinculados').select('cnpj, orgao_id, orgao_nome');
+      const data = await api.get<any[]>('/api/orgaos-vinculados');
       const map: Record<string, { orgao_id: string; orgao_nome: string }> = {};
       (data || []).forEach((v: any) => { if (v.cnpj) map[v.cnpj] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome }; });
       setVinculosMap(map);
@@ -263,10 +263,9 @@ export default function LicitacaoConsulta() {
     if (!selectedUnidade || !vinculoOrgaoId) { toast.error('Selecione um órgão para associar.'); return; }
     const cnpj = getCnpj(selectedUnidade);
     if (!cnpj) { toast.error('Unidade sem CNPJ — não é possível associar.'); return; }
-    const { error } = await supabase
-      .from('orgaos_vinculados')
-      .upsert({ cnpj, orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome }, { onConflict: 'cnpj' });
-    if (error) { toast.error('Erro ao associar: ' + error.message); return; }
+    try {
+      await api.post('/api/orgaos-vinculados/upsert', { cnpj, orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome });
+    } catch (err: any) { toast.error('Erro ao associar: ' + err.message); return; }
     setVinculosMap(prev => ({ ...prev, [cnpj]: { orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome } }));
     toast.success('Órgão associado com sucesso!');
   };
@@ -274,8 +273,12 @@ export default function LicitacaoConsulta() {
   const handleViewOrgao = async (orgaoId: string) => {
     setLoadingOrgaoView(true);
     setViewOrgaoDialogOpen(true);
-    const { data, error } = await supabase.from('orgaos').select('*').eq('id', orgaoId).maybeSingle();
-    if (error || !data) {
+    let data: any;
+    try {
+      const orgaos = await api.get<any[]>('/api/orgaos', { search: orgaoId });
+      data = (orgaos || []).find((o: any) => o.id === orgaoId) || null;
+    } catch { data = null; }
+    if (!data) {
       toast.error('Erro ao carregar dados do órgão');
       setViewOrgaoDialogOpen(false);
       setLoadingOrgaoView(false);
@@ -288,12 +291,7 @@ export default function LicitacaoConsulta() {
         if (response.ok) { const municipio = await response.json(); cidadeNome = municipio?.nome || null; }
       } catch (e) { console.error('Erro ao buscar nome da cidade:', e); }
     }
-    let grupoNome = null;
-    const { data: vinculos } = await supabase.from('orgaos_grupos').select('grupo_id').eq('orgao_id', orgaoId).limit(1);
-    if (vinculos && vinculos.length > 0) {
-      const { data: grupoData } = await supabase.from('grupo_de_orgaos').select('nome').eq('id', vinculos[0].grupo_id).maybeSingle();
-      if (grupoData) grupoNome = grupoData.nome;
-    }
+    const grupoNome = data.grupo_nome || null;
     setOrgaoViewData({ ...data, cidade_nome: cidadeNome, grupo_nome: grupoNome });
     setLoadingOrgaoView(false);
   };
@@ -357,8 +355,13 @@ export default function LicitacaoConsulta() {
 
   useEffect(() => {
     const loadTipos = async () => {
-      const { data } = await supabase.from('tipo_licitacoes').select('id, sigla, descricao').order('sigla');
-      if (data) setTiposLicitacao(data);
+      try {
+        const data = await api.get<{ id: string; sigla: string; descricao: string | null }[]>('/api/tipo-licitacoes');
+        if (data) {
+          const sorted = [...data].sort((a, b) => (a.sigla || '').localeCompare(b.sigla || ''));
+          setTiposLicitacao(sorted);
+        }
+      } catch { /* silencia */ }
     };
     loadTipos();
   }, []);
@@ -392,36 +395,35 @@ export default function LicitacaoConsulta() {
   const loadContratacoes = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('contratacoes').select('*').order('dt_publicacao', { ascending: false });
-
       // Filtro por aba
       if (activeTab === 'conferir') {
-        // cadastrado=true E tem marcações E não enviada
-        const { data: comMarcacoes } = await supabase
-          .from('contratacoes_marcacoes')
-          .select('contratacao_id');
-        const idsComMarcacoes = comMarcacoes?.map(m => m.contratacao_id) || [];
+        // Primeiro busca todos os IDs que têm marcações
+        const allMarcacoes = await api.get<any[]>('/api/contratacoes-marcacoes');
+        const idsComMarcacoes = [...new Set((allMarcacoes || []).map((m: any) => m.contratacao_id))];
+
+        if (idsComMarcacoes.length === 0) {
+          setContratacoes([]);
+          setLoading(false);
+          return;
+        }
 
         // Busca contratações da aba conferir
-        const { data: conferirRaw, error: conferirError } = await supabase
-          .from('contratacoes')
-          .select('*, tipo_licitacao:descricao_modalidade(sigla, descricao)')
-          .eq('cadastrado', true)
-          .eq('enviada', false)
-          .or('excluido.is.null,excluido.eq.false')
-          .in('id', idsComMarcacoes.length > 0 ? idsComMarcacoes : ['00000000-0000-0000-0000-000000000000'])
-          .order('dt_publicacao', { ascending: false });
-
-        if (conferirError) throw conferirError;
+        const conferirParams: Record<string, string> = {
+          cadastrado: 'true',
+          enviada: 'false',
+          hide_excluido: 'true',
+          ids: idsComMarcacoes.join(','),
+          include_tipo: 'true',
+          sort: 'dt_publicacao',
+          order: 'desc',
+        };
+        const conferirRaw = await api.get<any[]>('/api/contratacoes', conferirParams);
 
         // Busca nomes dos usuários que cadastraram
         const userIds = [...new Set((conferirRaw || []).map((c: any) => c.cadastrado_por).filter(Boolean))];
         let profilesMap: Record<string, string> = {};
         if (userIds.length > 0) {
-          const { data: profilesData } = await supabase
-            .from('profiles')
-            .select('user_id, full_name')
-            .in('user_id', userIds);
+          const profilesData = await api.get<any[]>('/api/profiles', { user_ids: userIds.join(',') });
           (profilesData || []).forEach((p: any) => { profilesMap[p.user_id] = p.full_name; });
         }
 
@@ -437,20 +439,20 @@ export default function LicitacaoConsulta() {
         setLoading(false);
         return;
       } else if (activeTab === 'enviadas') {
-        const { data: enviadasRaw, error: enviadasError } = await supabase
-          .from('contratacoes')
-          .select('*, tipo_licitacao:descricao_modalidade(sigla, descricao)')
-          .eq('enviada', true)
-          .or('excluido.is.null,excluido.eq.false')
-          .order('dt_envio', { ascending: false, nullsFirst: false });
-
-        if (enviadasError) throw enviadasError;
+        const enviadasParams: Record<string, string> = {
+          enviada: 'true',
+          hide_excluido: 'true',
+          include_tipo: 'true',
+          sort: 'dt_envio',
+          order: 'desc',
+        };
+        const enviadasRaw = await api.get<any[]>('/api/contratacoes', enviadasParams);
 
         // Busca nomes dos usuários
         const userIdsEnv = [...new Set((enviadasRaw || []).map((c: any) => c.cadastrado_por).filter(Boolean))];
         let profilesMapEnv: Record<string, string> = {};
         if (userIdsEnv.length > 0) {
-          const { data: profData } = await supabase.from('profiles').select('user_id, full_name').in('user_id', userIdsEnv);
+          const profData = await api.get<any[]>('/api/profiles', { user_ids: userIdsEnv.join(',') });
           (profData || []).forEach((p: any) => { profilesMapEnv[p.user_id] = p.full_name; });
         }
 
@@ -471,36 +473,43 @@ export default function LicitacaoConsulta() {
         return;
       }
 
-      // Filtros adicionais
-      if (selectedUFs.size > 0) query = query.in('uf', Array.from(selectedUFs));
-      else if (filtroUF) query = query.eq('uf', filtroUF);
-      if (filtroOrgao) query = query.ilike('orgao_pncp', `%${filtroOrgao}%`);
+      // Lista Completa — build params
+      const params: Record<string, string> = {
+        sort: 'dt_publicacao',
+        order: 'desc',
+      };
+
+      if (selectedUFs.size > 0) params.ufs = Array.from(selectedUFs).join(',');
+      else if (filtroUF) params.ufs = filtroUF;
+      if (filtroOrgao) params.orgao_pncp = filtroOrgao;
       const campoData = filtroPeriodoBase;
-      if (filtroDataInicio) query = query.gte(campoData, filtroDataInicio);
-      if (filtroDataFim) query = query.lte(campoData, filtroDataFim);
-      if (filtroMunicipio) query = query.ilike('municipio', `%${filtroMunicipio}%`);
-      if (filtroEsfera) query = query.eq('esfera', filtroEsfera);
-      if (filtroPoder) query = query.eq('poder', filtroPoder);
-      if (filtroModalidade) query = query.eq('descricao_modalidade', filtroModalidade);
-      if (filtroNumAtiva) query = query.ilike('num_ativa', `%${filtroNumAtiva}%`);
-      if (filtroNPncp) query = query.ilike('cd_pn', `%${filtroNPncp}%`);
+      if (filtroDataInicio) params[campoData + '_gte'] = filtroDataInicio;
+      if (filtroDataFim) params[campoData + '_lte'] = filtroDataFim;
+      if (filtroMunicipio) params.municipio = filtroMunicipio;
+      if (filtroEsfera) params.esfera = filtroEsfera;
+      if (filtroPoder) params.poder = filtroPoder;
+      if (filtroModalidade) params.descricao_modalidade = filtroModalidade;
+      if (filtroNumAtiva) params.num_ativa = filtroNumAtiva;
+      if (filtroNPncp) params.cd_pn = filtroNPncp;
+
       // Situação (pendentes/vinculadas/excluídas) - apenas na Lista Completa
       if (activeTab === 'todas') {
         if (filtroSituacaoRadio === 'pendentes') {
-          query = query.eq('cadastrado', false).or('excluido.is.null,excluido.eq.false');
+          params.cadastrado = 'false';
+          params.hide_excluido = 'true';
         } else if (filtroSituacaoRadio === 'vinculadas') {
-          query = query.eq('cadastrado', true).or('excluido.is.null,excluido.eq.false');
+          params.cadastrado = 'true';
+          params.hide_excluido = 'true';
         } else if (filtroSituacaoRadio === 'excluidas') {
-          query = query.eq('excluido', true);
+          params.excluido = 'true';
         } else {
           // Todas: não mostra excluídas por padrão
-          query = query.or('excluido.is.null,excluido.eq.false');
+          params.hide_excluido = 'true';
         }
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-      
+      const data = await api.get<Contratacao[]>('/api/contratacoes', params);
+
       // Ordena do mais recente para o mais antigo baseado em dt_publicacao
       // Se dt_publicacao for null, usa dt_vinculo_ativa ou created_at como fallback
       if (data) {
@@ -508,40 +517,39 @@ export default function LicitacaoConsulta() {
           // Prioriza dt_publicacao, depois dt_vinculo_ativa, depois created_at
           const dataA = a.dt_publicacao || (a as any).dt_vinculo_ativa || (a as any).created_at;
           const dataB = b.dt_publicacao || (b as any).dt_vinculo_ativa || (b as any).created_at;
-          
+
           if (!dataA && !dataB) return 0;
           if (!dataA) return 1; // Sem data vai para o final
           if (!dataB) return -1; // Sem data vai para o final
-          
+
           // Mais recente primeiro (dataB - dataA)
           return new Date(dataB).getTime() - new Date(dataA).getTime();
         });
       }
-      
+
       // Carregar tipos de licitação se necessário
       if (data) {
-        const tipoIds = data
+        const tipoIds = [...new Set(data
           .map(c => (c as any).descricao_modalidade)
-          .filter(id => id) as string[];
-        
+          .filter(id => id) as string[])];
+
         if (tipoIds.length > 0) {
-          const { data: tipos } = await supabase
-            .from('tipo_licitacoes')
-            .select('id, sigla, descricao')
-            .in('id', tipoIds);
-          
-          if (tipos) {
-            const tiposMap = new Map(tipos.map(t => [t.id, t]));
-            data.forEach(c => {
-              const tipoId = (c as any).descricao_modalidade;
-              if (tipoId) {
-                (c as any).tipo_licitacao = tiposMap.get(tipoId) || null;
-              }
-            });
-          }
+          try {
+            const tipos = await api.post<{ id: string; sigla: string; descricao: string | null }[]>('/api/tipo-licitacoes/by-ids', { ids: tipoIds });
+
+            if (tipos) {
+              const tiposMap = new Map(tipos.map(t => [t.id, t]));
+              data.forEach(c => {
+                const tipoId = (c as any).descricao_modalidade;
+                if (tipoId) {
+                  (c as any).tipo_licitacao = tiposMap.get(tipoId) || null;
+                }
+              });
+            }
+          } catch { /* tipos lookup failed, continue without */ }
         }
       }
-      
+
       setContratacoes(data || []);
     } catch (error: any) {
       toast.error('Erro ao carregar: ' + error.message);
@@ -575,6 +583,48 @@ export default function LicitacaoConsulta() {
   };
 
   const applyFilters = () => {
+    loadContratacoes();
+  };
+
+  // Modalidades únicas para o layout modalidade
+  const modalidadesUnicas = useMemo(() => {
+    const map = new Map<string, { modalidade: string; descricao_modalidade: string | null; tipo_licitacao: { sigla: string; descricao: string | null } | null }>();
+    contratacoes.forEach(c => {
+      const mod = (c as any).modalidade as string | null;
+      if (mod && !map.has(mod)) {
+        map.set(mod, {
+          modalidade: mod,
+          descricao_modalidade: (c as any).descricao_modalidade || null,
+          tipo_licitacao: (c as any).tipo_licitacao || null,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.modalidade.localeCompare(b.modalidade));
+  }, [contratacoes]);
+
+  // Associar modalidade PNCP a um tipo de licitação do sistema
+  const handleAssociarModalidade = async () => {
+    if (!selectedModalidade || !associarTipoId) {
+      toast.error('Selecione uma modalidade e um tipo de licitação');
+      return;
+    }
+    // Atualiza todas contratacoes com essa modalidade
+    const idsParaAtualizar = contratacoes
+      .filter(c => (c as any).modalidade === selectedModalidade)
+      .map(c => c.id);
+    if (idsParaAtualizar.length === 0) {
+      toast.error('Nenhuma contratação encontrada com essa modalidade');
+      return;
+    }
+    try {
+      await api.patch('/api/contratacoes/batch', { ids: idsParaAtualizar, data: { descricao_modalidade: associarTipoId } });
+    } catch (err: any) {
+      toast.error('Erro ao associar: ' + err.message);
+      return;
+    }
+    toast.success('Modalidade associada com sucesso!');
+    setAssociarTipoId('');
+    setSelectedModalidade(null);
     loadContratacoes();
   };
 
@@ -727,7 +777,7 @@ export default function LicitacaoConsulta() {
                       variant="outline"
                       onClick={async () => {
                         const ids = Array.from(selectedConferirIds);
-                        await Promise.all(ids.map(id => supabase.from('contratacoes').update({ lida: novoValorLida }).eq('id', id)));
+                        await api.patch('/api/contratacoes/batch', { ids, data: { lida: novoValorLida } });
                         setContratacoes(prev => prev.map(x => selectedConferirIds.has(x.id) ? { ...x, lida: novoValorLida } : x));
                         setSelectedConferirIds(new Set());
                         toast.success(novoValorLida ? `${ids.length} licitação(ões) marcadas como lidas!` : `${ids.length} licitação(ões) desmarcadas!`);
@@ -754,7 +804,7 @@ export default function LicitacaoConsulta() {
                             className="bg-red-500 hover:bg-red-600 text-white"
                             onClick={async () => {
                               const ids = Array.from(selectedConferirIds);
-                              await Promise.all(ids.map(id => supabase.from('contratacoes').update({ cadastrado: false }).eq('id', id)));
+                              await api.patch('/api/contratacoes/batch', { ids, data: { cadastrado: false } });
                               setContratacoes(prev => prev.filter(x => !selectedConferirIds.has(x.id)));
                               setSelectedConferirIds(new Set());
                               toast.success(`${ids.length} licitação(ões) devolvidas para pendentes!`);
@@ -777,7 +827,7 @@ export default function LicitacaoConsulta() {
                       variant="outline"
                       onClick={async () => {
                         const novoValor = !selectedConferir.lida;
-                        await supabase.from('contratacoes').update({ lida: novoValor }).eq('id', selectedConferir.id);
+                        await api.patch('/api/contratacoes/' + selectedConferir.id, { lida: novoValor });
                         setContratacoes(prev => prev.map(x => x.id === selectedConferir.id ? { ...x, lida: novoValor } : x));
                         setSelectedConferir(prev => prev ? { ...prev, lida: novoValor } : prev);
                       }}
@@ -809,7 +859,7 @@ export default function LicitacaoConsulta() {
                           <AlertDialogAction
                             className="bg-red-500 hover:bg-red-600 text-white"
                             onClick={async () => {
-                              await supabase.from('contratacoes').update({ cadastrado: false }).eq('id', selectedConferir.id);
+                              await api.patch('/api/contratacoes/' + selectedConferir.id, { cadastrado: false });
                               setContratacoes(prev => prev.filter(x => x.id !== selectedConferir.id));
                               setSelectedConferir(null);
                               setConferirRamos([]);
@@ -855,7 +905,7 @@ export default function LicitacaoConsulta() {
                           <AlertDialogAction
                             className="bg-red-500 hover:bg-red-600 text-white"
                             onClick={async () => {
-                              await supabase.from('contratacoes').update({ excluido: true }).eq('id', selectedEnviada.id);
+                              await api.patch('/api/contratacoes/' + selectedEnviada.id, { excluido: true });
                               setContratacoes(prev => prev.filter(x => x.id !== selectedEnviada.id));
                               setSelectedEnviada(null);
                               setEnviadasRamos([]);
@@ -1414,7 +1464,7 @@ export default function LicitacaoConsulta() {
                         className="w-4 h-4 cursor-pointer accent-[#02572E]"
                         onChange={async (e) => {
                           const novoValor = e.target.checked;
-                          await supabase.from('contratacoes').update({ lida: novoValor }).eq('id', c.id);
+                          await api.patch('/api/contratacoes/' + c.id, { lida: novoValor });
                           setContratacoes(prev => prev.map(x => x.id === c.id ? { ...x, lida: novoValor } : x));
                         }}
                       />
@@ -1572,42 +1622,89 @@ export default function LicitacaoConsulta() {
                   </tbody>
                 </table>
               ) : filtroLayout === 'modalidade' ? (
-                <table className="caption-bottom text-sm table-fixed border-collapse" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
-                  <colgroup>
-                    {colunasAtuais.map(k => <col key={k} style={{ width: getWidth(k), minWidth: getWidth(k) }} />)}
-                  </colgroup>
-                  <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
-                    <tr className="bg-white border-b">
-                      {colunasAtuais.map((k, i) => (
-                        <th key={k} className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap relative group">
-                          {k}
-                          {i < colunasAtuais.length - 1 && (
-                            <div
-                              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 transition-colors flex items-center justify-center"
-                              onMouseDown={(e) => handleResizeStart(k, e)}
-                              onDoubleClick={(e) => { e.stopPropagation(); handleAutoFitColumn(k); }}
-                              title="Arraste para redimensionar. Duplo clique para ajustar ao conteúdo."
+                <div className="flex flex-col h-full min-h-0">
+                  {/* Tabela de modalidades únicas */}
+                  <div className="flex-1 overflow-auto min-h-0">
+                    <table className="caption-bottom text-sm border-collapse w-full">
+                      <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
+                        <tr className="bg-white border-b">
+                          <th className="h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white w-[60px]">Id</th>
+                          <th className="h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white">ModalidadePncp</th>
+                          <th className="h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white">TipoLicitacaoAtiva</th>
+                        </tr>
+                      </thead>
+                      <tbody className="[&_tr:last-child]:border-0">
+                        {modalidadesUnicas.map((m, idx) => {
+                          const isSelected = selectedModalidade === m.modalidade;
+                          const tipoAssociado = m.tipo_licitacao ? `${m.tipo_licitacao.sigla} ${m.tipo_licitacao.descricao || ''}`.trim() : '';
+                          return (
+                            <tr
+                              key={m.modalidade}
+                              className={cn("border-b transition-colors cursor-pointer", isSelected ? "bg-blue-600 text-white" : "hover:bg-muted/50")}
+                              onClick={() => {
+                                setSelectedModalidade(m.modalidade);
+                                setAssociarTipoId(m.descricao_modalidade || '');
+                              }}
                             >
-                              <div className="w-0.5 h-6 bg-border group-hover:bg-primary/50 rounded" />
-                            </div>
-                          )}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="[&_tr:last-child]:border-0">
-                    {contratacoes.map((c) => (
-                      <tr key={c.id} className="border-b transition-colors hover:bg-muted/50">
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).descricao_modalidade || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).modalidade || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).modalidade_ativa || (c as any).tipo_licitacao?.descricao || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-right">
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-700 p-0" onClick={() => navigate(`/licitacoes/cadastro?id=${c.id}`)} title="Visualizar"><Eye className="w-3.5 h-3.5" /></Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                              <td className="px-4 py-1.5 text-sm">{idx + 1}</td>
+                              <td className="px-4 py-1.5 text-sm">{m.modalidade}</td>
+                              <td className="px-4 py-1.5 text-sm">{tipoAssociado || '-'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Painel de associação */}
+                  {selectedModalidade && (
+                    <div className="flex-shrink-0 border-t pt-3 mt-2 flex items-end gap-4">
+                      <div className="space-y-1">
+                        <Label className="text-xs font-medium">IdModalidade</Label>
+                        <Input value={modalidadesUnicas.find(m => m.modalidade === selectedModalidade)?.descricao_modalidade || '-'} disabled className="h-8 text-sm w-[80px]" />
+                      </div>
+                      <div className="space-y-1 flex-1">
+                        <Label className="text-xs font-medium">Descrição da Modalidade</Label>
+                        <Input value={selectedModalidade} disabled className="h-8 text-sm" />
+                      </div>
+                      <div className="space-y-1 flex-1">
+                        <Popover open={associarPopupOpen} onOpenChange={(open) => { setAssociarPopupOpen(open); if (!open) setAssociarSearchTerm(''); }}>
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" role="combobox" className="h-8 w-full text-sm justify-between font-normal">
+                              <span className="truncate">
+                                {associarTipoId
+                                  ? (() => { const t = tiposLicitacao.find(t => t.id === associarTipoId); return t ? `${t.sigla} ${t.descricao || ''}`.trim() : 'Selecionar...'; })()
+                                  : 'Selecionar tipo...'}
+                              </span>
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[280px] p-0" align="start" side="top" avoidCollisions>
+                            <Command>
+                              <CommandInput placeholder="Pesquisar tipo..." value={associarSearchTerm} onValueChange={setAssociarSearchTerm} />
+                              <CommandList>
+                                <CommandEmpty>Nenhum tipo encontrado.</CommandEmpty>
+                                <CommandGroup className="p-0 max-h-[250px] overflow-y-auto">
+                                  {tiposLicitacao.map((t) => {
+                                    const label = `${t.sigla} ${t.descricao || ''}`.trim();
+                                    return (
+                                      <CommandItem key={t.id} value={label} onSelect={() => { setAssociarTipoId(t.id); setAssociarPopupOpen(false); setAssociarSearchTerm(''); }} className={cn("cursor-pointer", associarTipoId === t.id && "bg-accent")}>
+                                        {t.sigla} {t.descricao ? `- ${t.descricao}` : ''}
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                      <Button size="sm" className="h-8 bg-[#02572E] text-white hover:bg-[#024a27] whitespace-nowrap" onClick={handleAssociarModalidade}>
+                        Associar Modalidade?
+                      </Button>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <table className="caption-bottom text-sm table-fixed border-collapse" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
                   <colgroup>
@@ -1744,16 +1841,16 @@ export default function LicitacaoConsulta() {
                       onKeyDown={async (e) => {
                         if (e.key === 'Tab' && vinculoOrgaoNome.trim()) {
                           e.preventDefault();
-                          const { data } = await supabase
-                            .from('orgaos')
-                            .select('id, nome_orgao')
-                            .ilike('nome_orgao', `%${vinculoOrgaoNome.trim()}%`)
-                            .limit(2);
-                          if (data && data.length === 1) {
-                            setVinculoOrgaoId(data[0].id);
-                            setVinculoOrgaoNome(data[0].nome_orgao);
-                          } else {
-                            // não encontrou exatamente 1 — abre pesquisa avançada
+                          try {
+                            const data = await api.get<any[]>('/api/orgaos', { search: vinculoOrgaoNome.trim() });
+                            if (data && data.length === 1) {
+                              setVinculoOrgaoId(data[0].id);
+                              setVinculoOrgaoNome(data[0].nome_orgao);
+                            } else {
+                              // não encontrou exatamente 1 — abre pesquisa avançada
+                              setBuscarOrgaoUnidadeOpen(true);
+                            }
+                          } catch {
                             setBuscarOrgaoUnidadeOpen(true);
                           }
                         }

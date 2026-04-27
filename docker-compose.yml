@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ativa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ativa
+      POSTGRES_PASSWORD: ativa_secret_2026
+      POSTGRES_DB: ativa_licitacao
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ativa-app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      DATABASE_URL: postgresql://ativa:ativa_secret_2026@postgres:5432/ativa_licitacao
+      JWT_SECRET: ativa-jwt-secret-2026-change-in-production
+      PORT: "3000"
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:

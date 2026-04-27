@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Eye, Trash2, Pencil } from 'lucide-react';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -48,108 +48,99 @@ export default function OrgaosSemIBGE() {
 
   const loadOrgaos = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('orgaos')
-      .select('id, nome_orgao, uf, cidade_ibge, compras_net, compras_mg, endereco, telefone')
-      .order('nome_orgao');
+    try {
+      const data = await api.get<Orgao[]>('/api/orgaos/sem-ibge');
 
-    if (error) {
-      toast.error('Erro ao carregar órgãos');
-      setLoading(false);
-      return;
-    }
-
-    // Buscar nomes das cidades para os que têm código IBGE
-    const orgaosComCidade = await Promise.all(
-      (data || []).map(async (orgao) => {
-        if (orgao.cidade_ibge && orgao.uf) {
-          try {
-            const response = await fetch(
-              `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${orgao.cidade_ibge}`
-            );
-            if (response.ok) {
-              const municipio = await response.json();
-              return { ...orgao, cidade_nome: municipio?.nome || null };
+      // Buscar nomes das cidades para os que têm código IBGE
+      const orgaosComCidade = await Promise.all(
+        (data || []).map(async (orgao) => {
+          if (orgao.cidade_ibge && orgao.uf) {
+            try {
+              const response = await fetch(
+                `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${orgao.cidade_ibge}`
+              );
+              if (response.ok) {
+                const municipio = await response.json();
+                return { ...orgao, cidade_nome: municipio?.nome || null };
+              }
+            } catch (error) {
+              console.error('Erro ao buscar nome da cidade:', error);
             }
-          } catch (error) {
-            console.error('Erro ao buscar nome da cidade:', error);
           }
-        }
-        return { ...orgao, cidade_nome: null };
-      })
-    );
+          return { ...orgao, cidade_nome: null };
+        })
+      );
 
-    setOrgaos(orgaosComCidade);
+      setOrgaos(orgaosComCidade);
+    } catch {
+      toast.error('Erro ao carregar órgãos');
+    }
     setLoading(false);
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('orgaos').delete().eq('id', id);
-    if (error) {
-      toast.error('Erro ao excluir: ' + error.message);
-    } else {
+    try {
+      await api.delete('/api/orgaos/' + id);
       toast.success('Órgão excluído!');
       loadOrgaos();
+    } catch (error: any) {
+      toast.error('Erro ao excluir: ' + error.message);
     }
   };
 
   const handleView = async (id: string) => {
     setLoadingView(true);
     setViewDialogOpen(true);
-    
-    const { data, error } = await supabase
-      .from('orgaos')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
 
-    if (error || !data) {
+    try {
+      const data = await api.get<OrgaoCompleto>('/api/orgaos/' + id);
+
+      if (!data) {
+        toast.error('Erro ao carregar dados do órgão');
+        setViewDialogOpen(false);
+        setLoadingView(false);
+        return;
+      }
+
+      let cidadeNome = null;
+      if (data.uf && data.cidade_ibge) {
+        try {
+          const response = await fetch(
+            `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${data.cidade_ibge}`
+          );
+          if (response.ok) {
+            const municipio = await response.json();
+            cidadeNome = municipio?.nome || null;
+          }
+        } catch (error) {
+          console.error('Erro ao buscar nome da cidade:', error);
+        }
+      }
+
+      // Buscar grupo do órgão
+      let grupoNome = null;
+      try {
+        const grupoIds = await api.get<string[]>('/api/orgaos/' + id + '/grupos');
+        if (grupoIds && grupoIds.length > 0) {
+          const grupos = await api.get<{ id: string; nome: string }[]>('/api/grupo-orgaos');
+          const grupo = grupos?.find(g => g.id === grupoIds[0]);
+          if (grupo) {
+            grupoNome = grupo.nome;
+          }
+        }
+      } catch {
+        // silently fail
+      }
+
+      setOrgaoView({
+        ...data,
+        cidade_nome: cidadeNome,
+        grupo_nome: grupoNome,
+      });
+    } catch {
       toast.error('Erro ao carregar dados do órgão');
       setViewDialogOpen(false);
-      setLoadingView(false);
-      return;
     }
-
-    let cidadeNome = null;
-    if (data.uf && data.cidade_ibge) {
-      try {
-        const response = await fetch(
-          `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${data.cidade_ibge}`
-        );
-        if (response.ok) {
-          const municipio = await response.json();
-          cidadeNome = municipio?.nome || null;
-        }
-      } catch (error) {
-        console.error('Erro ao buscar nome da cidade:', error);
-      }
-    }
-
-    // Buscar grupo do órgão
-    let grupoNome = null;
-    const { data: vinculos } = await supabase
-      .from('orgaos_grupos')
-      .select('grupo_id')
-      .eq('orgao_id', id)
-      .limit(1);
-
-    if (vinculos && vinculos.length > 0) {
-      const { data: grupoData } = await supabase
-        .from('grupo_de_orgaos')
-        .select('nome')
-        .eq('id', vinculos[0].grupo_id)
-        .maybeSingle();
-      
-      if (grupoData) {
-        grupoNome = grupoData.nome;
-      }
-    }
-
-    setOrgaoView({
-      ...data,
-      cidade_nome: cidadeNome,
-      grupo_nome: grupoNome,
-    });
     setLoadingView(false);
   };
 
