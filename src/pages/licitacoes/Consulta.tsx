@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Eye, Filter, X, Download, ChevronsUpDown, Search } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -76,6 +77,51 @@ const getRegiaoFromUF = (uf: string | null): string => {
   return UF_PARA_REGIAO[uf] || '-';
 };
 
+// ─── Helpers de formatação para exportação ───────────────
+const UF_NOMES: Record<string, string> = {
+  AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará',
+  DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso',
+  MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná',
+  PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
+  RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina',
+  SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins',
+};
+
+// UF no formato do modelo: "ES-Espírito Santo"
+const ufComNome = (uf: string | null): string => {
+  if (!uf) return '';
+  return UF_NOMES[uf] ? `${uf}-${UF_NOMES[uf]}` : uf;
+};
+
+const PODER_NOMES: Record<string, string> = { E: 'Executivo', L: 'Legislativo', J: 'Judiciário' };
+const poderNome = (v: string | null): string => (v ? (PODER_NOMES[v] || v) : '');
+
+const ESFERA_NOMES: Record<string, string> = { F: 'Federal', E: 'Estadual', M: 'Municipal' };
+const esferaNome = (v: string | null): string => (v ? (ESFERA_NOMES[v] || v) : '');
+
+// Remove caracteres de controle inválidos para XML (corrompem o .xlsx).
+// XML 1.0 só aceita tab(9), LF(10), CR(13) e códigos >= 32 (exceto 0xFFFE/0xFFFF).
+const limparXML = (v: string | number): string | number => {
+  if (typeof v !== 'string') return v;
+  let out = '';
+  for (let i = 0; i < v.length; i++) {
+    const c = v.charCodeAt(i);
+    if (c === 9 || c === 10 || c === 13 || (c >= 32 && c !== 0xfffe && c !== 0xffff)) out += v[i];
+  }
+  return out;
+};
+
+// ISO "2026-06-14T21:40:26(.xxxZ)" → "14/06/2026 21:40:26"
+const formatarDataHora = (iso: string | null | undefined): string => {
+  if (!iso) return '';
+  const [datePart, timeRaw] = String(iso).split('T');
+  const p = datePart.split('-');
+  if (p.length !== 3) return '';
+  const dataFmt = `${p[2].slice(0, 2)}/${p[1]}/${p[0]}`;
+  const hora = (timeRaw || '').replace('Z', '').split('.')[0].slice(0, 8);
+  return hora ? `${dataFmt} ${hora}` : dataFmt;
+};
+
 const getCnpj = (c: any): string | null => {
   if (c.cnpj) return c.cnpj;
   if (c.cd_pn) {
@@ -96,8 +142,31 @@ const COLUNAS_POR_LAYOUT: Record<string, string[]> = {
   modalidade: ['Id', 'ModalidadePncp', 'TipoLicitacaoAtiva', 'Ações'],
 };
 
+// Colunas (reais no banco) que cada layout precisa — evita trazer colunas
+// grandes de texto/JSON e deixa a paginação rápida mesmo com o banco remoto.
+const SELECT_POR_LAYOUT: Record<string, string> = {
+  detalhado: 'id,regiao,uf,num_licitacao,num_ativa,created_at,dt_alterado_ativa,titulo,municipio,unidade,un_cod,orgao_pncp,cnpj,cd_pn,modalidade,descricao_modalidade,conteudo,complemento,dt_criacao,dt_importacao,dt_publicacao,dt_atualizacao,dt_vigencia_ini,dt_vinculo_ativa,esfera,poder',
+  unidades: 'id,uf,esfera,poder,orgao_pncp,cnpj,cd_pn,num_licitacao,unidade,un_cod,municipio',
+  modalidade: 'id,modalidade,descricao_modalidade',
+};
+
+// Coluna exibida → campo real no banco (para ordenação server-side).
+// Colunas ausentes aqui não são ordenáveis no servidor (ex.: Ações, OrgaoAtiva).
+const COLUNA_PARA_CAMPO: Record<string, string> = {
+  'Região': 'uf', 'UF': 'uf', 'NumPncp': 'num_licitacao', 'NumAtiva': 'num_ativa',
+  'Alterado': 'dt_alterado_ativa', 'Titulo': 'titulo', 'Municipio': 'municipio',
+  'Unidade': 'unidade', 'UnCod': 'un_cod', 'OrgaoPNCP': 'orgao_pncp', 'CNPJ': 'cnpj',
+  'Modalidade': 'modalidade', 'Conteudo': 'conteudo', 'Complemento': 'complemento',
+  'DtCriacao': 'dt_criacao', 'DtImportacao': 'dt_importacao', 'DtPublicacao': 'dt_publicacao',
+  'DtAtualizacao': 'dt_atualizacao', 'DtVigencia': 'dt_vigencia_ini', 'DtVinculoAtiva': 'dt_vinculo_ativa',
+  'Esfera': 'esfera', 'Poder': 'poder', 'Estado': 'uf',
+};
+
+// Colunas ordenáveis apenas no cliente (layouts agregados Resumido/Modalidade).
+const COLUNAS_AGG_SORTAVEIS = ['Região', 'Estado', 'Quantidade', 'Id', 'ModalidadePncp', 'TipoLicitacaoAtiva'];
+
 const LARGURA_COLUNA: Record<string, number> = {
-  Região: 100, Estado: 70, Quantidade: 90, UF: 50, NumPncp: 100, NumAtiva: 100, Alterado: 95,
+  Região: 100, Estado: 70, Quantidade: 90, UF: 50, NumPncp: 220, NumAtiva: 100, Alterado: 95,
   Titulo: 200, Municipio: 120, Unidade: 120, UnCod: 80, OrgaoPNCP: 180, CNPJ: 140, Modalidade: 100,
   Conteudo: 250, Complemento: 120, DtCriacao: 95, DtImportacao: 95, DtPublicacao: 95, DtAtualizacao: 95,
   DtVigencia: 95, DtVinculoAtiva: 95, Esfera: 90, Poder: 90, cd_pn: 100, Ações: 60,
@@ -116,12 +185,20 @@ export default function LicitacaoConsulta() {
 
   const [loading, setLoading] = useState(true);
   const [contratacoes, setContratacoes] = useState<Contratacao[]>([]);
+  // Resumo agregado por UF (layout Resumido) — calculado no servidor
+  const [resumoData, setResumoData] = useState<{ uf: string | null; quantidade: number }[]>([]);
+  // Unidades únicas (layout Unidades) — agregadas no servidor, paginadas no cliente
+  const [unidadesData, setUnidadesData] = useState<any[]>([]);
+  const [exporting, setExporting] = useState(false);
+  // Ordenação por clique no cabeçalho (sortCol = nome da coluna exibida)
+  const [sortCol, setSortCol] = useState<string>(savedFilters?.sortCol || 'DtPublicacao');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(savedFilters?.sortDir || 'desc');
   const [activeTab, setActiveTab] = useState(savedFilters?.activeTab || 'todas');
   // Paginação
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalRecords, setTotalRecords] = useState(0);
-  const PER_PAGE = 100;
+  const PER_PAGE = 300;
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
   const [filtroUF, setFiltroUF] = useState(savedFilters?.filtroUF || '');
   const [filtroOrgao, setFiltroOrgao] = useState(savedFilters?.filtroOrgao || '');
@@ -164,11 +241,18 @@ export default function LicitacaoConsulta() {
       filtroMunicipio, filtroEsfera, filtroPoder, filtroModalidade, filtroSituacao,
       filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio,
       filtroLayout, selectedUFs: Array.from(selectedUFs), filtroUFConferir,
+      sortCol, sortDir,
     }));
   }, [activeTab, filtroUF, filtroOrgao, filtroDataInicio, filtroDataFim,
     filtroMunicipio, filtroEsfera, filtroPoder, filtroModalidade, filtroSituacao,
     filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio,
-    filtroLayout, selectedUFs]);
+    filtroLayout, selectedUFs, sortCol, sortDir]);
+
+  // Reseta os filtros ao sair da página de Consultas (desmonte do componente).
+  // A persistência acima serve apenas enquanto a página está aberta.
+  useEffect(() => {
+    return () => { sessionStorage.removeItem('consulta-filtros'); };
+  }, []);
 
   // Estado do painel de detalhes da aba Conferir
   const [selectedConferir, setSelectedConferir] = useState<Contratacao | null>(null);
@@ -195,12 +279,13 @@ export default function LicitacaoConsulta() {
   const [enviadasRamos, setEnviadasRamos] = useState<string[]>([]);
   const [loadingEnviadasRamos, setLoadingEnviadasRamos] = useState(false);
 
-  // Estado da aba Unidades (layout unidades)
-  const [selectedUnidade, setSelectedUnidade] = useState<Contratacao | null>(null);
+  // Estado da aba Unidades (layout unidades) — agora cada linha é uma unidade única
+  const [selectedUnidade, setSelectedUnidade] = useState<any | null>(null);
   const [vinculosMap, setVinculosMap] = useState<Record<string, { orgao_id: string; orgao_nome: string }>>({});
   const [vinculoOrgaoId, setVinculoOrgaoId] = useState('');
   const [vinculoOrgaoNome, setVinculoOrgaoNome] = useState('');
   const [buscarOrgaoUnidadeOpen, setBuscarOrgaoUnidadeOpen] = useState(false);
+  const [associando, setAssociando] = useState(false);
   const [viewOrgaoDialogOpen, setViewOrgaoDialogOpen] = useState(false);
   const [orgaoViewData, setOrgaoViewData] = useState<any>(null);
   const [loadingOrgaoView, setLoadingOrgaoView] = useState(false);
@@ -256,7 +341,7 @@ export default function LicitacaoConsulta() {
     } catch { /* silencia */ }
   }, []);
 
-  const handleSelectUnidade = (c: Contratacao) => {
+  const handleSelectUnidade = (c: any) => {
     setSelectedUnidade(c);
     const cnpj = getCnpj(c);
     const vinculo = cnpj ? vinculosMap[cnpj] : null;
@@ -268,11 +353,17 @@ export default function LicitacaoConsulta() {
     if (!selectedUnidade || !vinculoOrgaoId) { toast.error('Selecione um órgão para associar.'); return; }
     const cnpj = getCnpj(selectedUnidade);
     if (!cnpj) { toast.error('Unidade sem CNPJ — não é possível associar.'); return; }
+    setAssociando(true);
     try {
       await api.post('/api/orgaos-vinculados/upsert', { cnpj, orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome });
-    } catch (err: any) { toast.error('Erro ao associar: ' + err.message); return; }
+    } catch (err: any) {
+      toast.error('Erro ao associar: ' + err.message);
+      setAssociando(false);
+      return;
+    }
     setVinculosMap(prev => ({ ...prev, [cnpj]: { orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome } }));
     toast.success('Órgão associado com sucesso!');
+    setAssociando(false);
   };
 
   const handleViewOrgao = async (orgaoId: string) => {
@@ -341,10 +432,26 @@ export default function LicitacaoConsulta() {
     setWidth(columnKey, Math.max(maxW, 60));
   }, [colunasAtuais, setWidth]);
 
+  // Recarrega ao trocar de aba, filtro de UF da conferência ou layout.
+  // Incluir o layout evita renderizar dados de um layout no outro (o que
+  // travava o navegador ao ir do Resumido — que carrega tudo — para o Detalhado).
   useEffect(() => {
     setCurrentPage(1);
     loadContratacoes(1);
-  }, [activeTab, filtroUFConferir]);
+  }, [activeTab, filtroUFConferir, filtroLayout]);
+
+  // Ordenação: layouts paginados no servidor (detalhado) recarregam;
+  // layouts client-side (resumido/unidades/modalidade) reordenam via useMemo,
+  // só voltando para a página 1.
+  const sortInicial = useRef(true);
+  useEffect(() => {
+    if (sortInicial.current) { sortInicial.current = false; return; }
+    setCurrentPage(1);
+    if (activeTab === 'todas' && filtroLayout === 'detalhado') {
+      loadContratacoes(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortCol, sortDir]);
 
   // Fecha o modal de filtros ao trocar para aba Conferir (filtros só na Lista Completa)
   useEffect(() => {
@@ -398,7 +505,144 @@ export default function LicitacaoConsulta() {
     });
   };
 
-  const loadContratacoes = async (page?: number) => {
+  // Monta os parâmetros de filtro da Lista Completa (sem paginação).
+  // Usado tanto na listagem quanto na exportação, para garantir que o
+  // arquivo exportado reflita exatamente os mesmos filtros.
+  const buildFilterParams = (): Record<string, string> => {
+    const campoOrdenacao = COLUNA_PARA_CAMPO[sortCol] || 'dt_publicacao';
+    const params: Record<string, string> = { sort: campoOrdenacao, order: sortDir };
+    if (selectedUFs.size > 0) params.ufs = Array.from(selectedUFs).join(',');
+    else if (filtroUF) params.ufs = filtroUF;
+    if (filtroOrgao) params.orgao_pncp = filtroOrgao;
+    const campoData = filtroPeriodoBase;
+    if (filtroDataInicio) params[campoData + '_gte'] = filtroDataInicio;
+    if (filtroDataFim) params[campoData + '_lte'] = filtroDataFim;
+    if (filtroMunicipio) params.municipio = filtroMunicipio;
+    if (filtroEsfera) params.esfera = filtroEsfera;
+    if (filtroPoder) params.poder = filtroPoder;
+    if (filtroModalidade) params.descricao_modalidade = filtroModalidade;
+    if (filtroNumAtiva) params.num_ativa = filtroNumAtiva;
+    if (filtroNPncp) params.cd_pn = filtroNPncp;
+    if (activeTab === 'todas') {
+      if (filtroSituacaoRadio === 'pendentes') { params.cadastrado = 'false'; params.hide_excluido = 'true'; }
+      else if (filtroSituacaoRadio === 'vinculadas') { params.cadastrado = 'true'; params.hide_excluido = 'true'; }
+      else if (filtroSituacaoRadio === 'excluidas') { params.excluido = 'true'; }
+      else { params.hide_excluido = 'true'; }
+    }
+    return params;
+  };
+
+  // Exporta a lista filtrada para XLSX. No layout Detalhado segue o modelo
+  // public/exportação pncp.xlsx (23 colunas, datas com hora, UF/poder/esfera por extenso).
+  const COLUNAS_DETALHADO_EXPORT = [
+    'Regiao', 'UF', 'NumPncp', 'NumAtiva', 'Alterado', 'Titulo', 'Municipio', 'Unidade', 'UnCod',
+    'OrgaoPNCP', 'CNPJ', 'Modalidade', 'Conteudo', 'Complemento', 'DtCriacao', 'DtImportacao',
+    'DtPublicacao', 'DtAtualizacao', 'DtVigenciaIni', 'DtVinculoAtiva', 'Esfera', 'Poder', 'cd_pn',
+  ];
+
+  const fetchTodosFiltrados = async (selectFields: string): Promise<Contratacao[]> => {
+    const baseParams = buildFilterParams();
+    const PER = 2000;
+    const all: Contratacao[] = [];
+    let page = 1;
+    // Lotes menores + skip_count (sem recontar) + parada quando a página vier
+    // incompleta. Evita o count caro e segura menos a conexão por requisição.
+    while (true) {
+      const resp = await api.get<{ data: Contratacao[] }>('/api/contratacoes', {
+        ...baseParams, select: selectFields, include_tipo: 'true',
+        page: String(page), per_page: String(PER), skip_count: 'true',
+      });
+      const batch = resp?.data || [];
+      all.push(...batch);
+      if (batch.length < PER) break;
+      page++;
+    }
+    return all;
+  };
+
+  const handleExportar = async () => {
+    setExporting(true);
+    try {
+      const aoa: (string | number)[][] = [];
+      let sheetName = 'Licitacoes';
+
+      if (activeTab === 'todas' && filtroLayout === 'resumido') {
+        aoa.push(['Regiao', 'Estado', 'Quantidade']);
+        dadosResumidos.forEach(d => aoa.push([d.regiao, d.estado, d.quantidade]));
+        aoa.push(['Total', '', totalRecords]);
+        sheetName = 'Resumido';
+      } else if (activeTab === 'todas' && filtroLayout === 'modalidade') {
+        const all = await fetchTodosFiltrados(SELECT_POR_LAYOUT.modalidade);
+        const map = new Map<string, { sigla: string; descricao: string | null } | null>();
+        all.forEach(c => { const m = (c as any).modalidade as string | null; if (m && !map.has(m)) map.set(m, (c as any).tipo_licitacao || null); });
+        aoa.push(['Id', 'ModalidadePncp', 'TipoLicitacaoAtiva']);
+        let i = 1;
+        for (const [m, tl] of map) aoa.push([i++, m, tl ? `${tl.sigla} ${tl.descricao || ''}`.trim() : '']);
+        sheetName = 'Modalidade';
+      } else if (activeTab === 'todas' && filtroLayout === 'unidades') {
+        // Exporta as unidades únicas já carregadas (respeitando a ordenação atual).
+        aoa.push(['UF', 'Esfera', 'Poder', 'OrgaoPNCP', 'CNPJ', 'Unidade', 'UnCod', 'Municipio', 'OrgaoAtiva', 'QtdLicitacoes']);
+        unidadesOrdenadas.forEach(u => {
+          const cnpj = u.cnpj || '';
+          aoa.push([
+            ufComNome(u.uf), esferaNome(u.esfera), poderNome(u.poder),
+            u.orgao_pncp || '', cnpj, u.unidade || '', u.un_cod || '',
+            u.municipio || '', (cnpj ? vinculosMap[cnpj]?.orgao_nome : '') || '', u.qtd_licitacoes ?? 0,
+          ]);
+        });
+        sheetName = 'Unidades';
+      } else {
+        // Detalhado (e demais abas) — formato do modelo
+        const all = await fetchTodosFiltrados(SELECT_POR_LAYOUT.detalhado);
+        aoa.push([...COLUNAS_DETALHADO_EXPORT]);
+        all.forEach(c => {
+          aoa.push([
+            (c as any).regiao || getRegiaoFromUF(c.uf),
+            ufComNome(c.uf),
+            c.num_licitacao || '',
+            formatarNumAtiva(c.num_ativa || c.n_controle_ativa || null, (c as any).created_at),
+            formatarDataHora((c as any).dt_alterado_ativa),
+            c.titulo || '',
+            (c as any).municipio || '',
+            (c as any).unidade || '',
+            (c as any).un_cod || '',
+            c.orgao_pncp || '',
+            getCnpj(c) || '',
+            (c as any).tipo_licitacao?.sigla || (c as any).modalidade || '',
+            (c as any).conteudo || '',
+            (c as any).complemento || '',
+            formatarDataHora((c as any).dt_criacao),
+            formatarDataHora((c as any).dt_importacao),
+            formatarDataHora(c.dt_publicacao),
+            formatarDataHora((c as any).dt_atualizacao),
+            formatarDataHora((c as any).dt_vigencia_ini),
+            formatarDataHora((c as any).dt_vinculo_ativa),
+            esferaNome((c as any).esfera),
+            poderNome((c as any).poder),
+            c.cd_pn ?? '',
+          ]);
+        });
+        sheetName = 'Detalhado';
+      }
+
+      // Sanitiza todas as células (remove caracteres ilegais para XML que
+      // corromperiam o arquivo — comuns no conteúdo vindo do PNCP).
+      const aoaLimpo = aoa.map(row => row.map(limparXML));
+      const ws = XLSX.utils.aoa_to_sheet(aoaLimpo);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      XLSX.writeFile(wb, `licitacoes_${sheetName.toLowerCase()}.xlsx`);
+      toast.success(`Exportados ${Math.max(0, aoa.length - 1)} registros`);
+    } catch (err: any) {
+      toast.error('Erro ao exportar: ' + (err?.message || err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // recount=false ao apenas mudar de página (mesmos filtros): evita refazer
+  // o count de 122k registros, deixando a navegação entre páginas mais rápida.
+  const loadContratacoes = async (page?: number, recount = true) => {
     const pageToLoad = page || currentPage;
     setLoading(true);
     try {
@@ -480,49 +724,58 @@ export default function LicitacaoConsulta() {
         return;
       }
 
-      // Lista Completa — build params
-      const params: Record<string, string> = {
-        sort: 'dt_publicacao',
-        order: 'desc',
-        page: String(pageToLoad),
-        per_page: String(PER_PAGE),
-      };
+      // Lista Completa — build params (filtros compartilhados com a exportação)
+      const params: Record<string, string> = buildFilterParams();
 
-      if (selectedUFs.size > 0) params.ufs = Array.from(selectedUFs).join(',');
-      else if (filtroUF) params.ufs = filtroUF;
-      if (filtroOrgao) params.orgao_pncp = filtroOrgao;
-      const campoData = filtroPeriodoBase;
-      if (filtroDataInicio) params[campoData + '_gte'] = filtroDataInicio;
-      if (filtroDataFim) params[campoData + '_lte'] = filtroDataFim;
-      if (filtroMunicipio) params.municipio = filtroMunicipio;
-      if (filtroEsfera) params.esfera = filtroEsfera;
-      if (filtroPoder) params.poder = filtroPoder;
-      if (filtroModalidade) params.descricao_modalidade = filtroModalidade;
-      if (filtroNumAtiva) params.num_ativa = filtroNumAtiva;
-      if (filtroNPncp) params.cd_pn = filtroNPncp;
-
-      // Situação (pendentes/vinculadas/excluídas) - apenas na Lista Completa
-      if (activeTab === 'todas') {
-        if (filtroSituacaoRadio === 'pendentes') {
-          params.cadastrado = 'false';
-          params.hide_excluido = 'true';
-        } else if (filtroSituacaoRadio === 'vinculadas') {
-          params.cadastrado = 'true';
-          params.hide_excluido = 'true';
-        } else if (filtroSituacaoRadio === 'excluidas') {
-          params.excluido = 'true';
-        } else {
-          // Todas: não mostra excluídas por padrão
-          params.hide_excluido = 'true';
-        }
+      // Resumido e Unidades são agregados no servidor (sem paginação por linha).
+      // Os demais layouts usam paginação por registro.
+      const agregado = filtroLayout === 'resumido' || filtroLayout === 'unidades';
+      if (!agregado) {
+        params.page = String(pageToLoad);
+        params.per_page = String(PER_PAGE);
+        // Busca apenas as colunas usadas pelo layout (evita os textões e acelera muito)
+        if (SELECT_POR_LAYOUT[filtroLayout]) params.select = SELECT_POR_LAYOUT[filtroLayout];
+        // Ao só paginar, não refaz o count (reaproveita o total já conhecido)
+        if (!recount) params.skip_count = 'true';
       }
 
-      const response = await api.get<{ data: Contratacao[]; total: number; page: number; per_page: number; total_pages: number }>('/api/contratacoes', params);
+      let data: Contratacao[];
 
-      const data = response?.data || [];
-      setTotalPages(response?.total_pages || 1);
-      setTotalRecords(response?.total || 0);
-      setCurrentPage(response?.page || 1);
+      if (filtroLayout === 'resumido') {
+        // Layout resumido: agregação por UF feita no servidor (groupBy),
+        // retornando ~27 linhas em vez de todos os registros.
+        params.group_by = 'uf';
+        const resp = await api.get<{ resumo: { uf: string | null; quantidade: number }[]; total: number }>('/api/contratacoes', params);
+        setResumoData(resp?.resumo || []);
+        setContratacoes([]);
+        setTotalPages(1);
+        setTotalRecords(resp?.total || 0);
+        setCurrentPage(1);
+        return;
+      } else if (filtroLayout === 'unidades') {
+        // Layout unidades: unidades únicas agregadas no servidor; paginação e
+        // ordenação são feitas no cliente (sobre o conjunto completo).
+        params.group_by = 'unidades';
+        const resp = await api.get<{ data: any[]; total: number }>('/api/contratacoes', params);
+        const unidades = resp?.data || [];
+        setUnidadesData(unidades);
+        setContratacoes([]);
+        setTotalRecords(unidades.length);
+        setTotalPages(Math.max(1, Math.ceil(unidades.length / PER_PAGE)));
+        setCurrentPage(1);
+        setSelectedUnidade(null);
+        return;
+      } else {
+        // Layouts com paginação — resposta é objeto { data, total, page, ... }
+        const response = await api.get<{ data: Contratacao[]; total?: number; page: number; per_page: number; total_pages?: number }>('/api/contratacoes', params);
+        data = response?.data || [];
+        // Só atualiza os totais quando recontamos (na navegação simples eles não mudam)
+        if (recount) {
+          setTotalPages(response?.total_pages || 1);
+          setTotalRecords(response?.total || 0);
+        }
+        setCurrentPage(response?.page || pageToLoad);
+      }
 
       // Carregar tipos de licitação se necessário
       if (data.length > 0) {
@@ -587,7 +840,25 @@ export default function LicitacaoConsulta() {
   const goToPage = (page: number) => {
     if (page < 1 || page > totalPages) return;
     setCurrentPage(page);
-    loadContratacoes(page);
+    // Unidades pagina no cliente (dados já carregados); demais recarregam do servidor.
+    if (activeTab === 'todas' && (filtroLayout === 'unidades' || filtroLayout === 'resumido')) return;
+    loadContratacoes(page, false);
+  };
+
+  // Ordenação por clique no cabeçalho
+  const isSortable = (col: string): boolean =>
+    !!COLUNA_PARA_CAMPO[col] || COLUNAS_AGG_SORTAVEIS.includes(col);
+
+  const handleSort = (col: string) => {
+    if (!isSortable(col)) return;
+    if (sortCol === col) {
+      setSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+    // Layouts paginados recarregam via useEffect [sortCol, sortDir];
+    // Resumido/Modalidade reordenam no cliente (useMemo).
   };
 
   // Modalidades únicas para o layout modalidade
@@ -603,8 +874,18 @@ export default function LicitacaoConsulta() {
         });
       }
     });
-    return Array.from(map.values()).sort((a, b) => a.modalidade.localeCompare(b.modalidade));
-  }, [contratacoes]);
+    const arr = Array.from(map.values());
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortCol === 'TipoLicitacaoAtiva') {
+      arr.sort((a, b) => dir * (a.tipo_licitacao?.sigla || '').localeCompare(b.tipo_licitacao?.sigla || ''));
+    } else if (sortCol === 'ModalidadePncp') {
+      arr.sort((a, b) => dir * a.modalidade.localeCompare(b.modalidade));
+    } else {
+      // padrão (inclui coluna "Id" = ordem alfabética da modalidade)
+      arr.sort((a, b) => a.modalidade.localeCompare(b.modalidade));
+    }
+    return arr;
+  }, [contratacoes, sortCol, sortDir]);
 
   // Associar modalidade PNCP a um tipo de licitação do sistema
   const handleAssociarModalidade = async () => {
@@ -661,7 +942,7 @@ export default function LicitacaoConsulta() {
   };
 
   const formatarNumAtiva = (numAtiva: string | null, createdAt: string | null | undefined) => {
-    if (!numAtiva) return '-';
+    if (!numAtiva) return 'Pendente';
     if (!createdAt) return numAtiva;
     
     const data = new Date(createdAt);
@@ -671,25 +952,89 @@ export default function LicitacaoConsulta() {
   };
 
   // Dados agregados para layout Resumido (Região, Estado, Quantidade)
-  const dadosResumidos = (() => {
+  // A contagem por UF vem agregada do servidor (resumoData).
+  const dadosResumidos = useMemo(() => {
     const map = new Map<string, { regiao: string; estado: string; quantidade: number }>();
-    contratacoes.forEach(c => {
-      const regiao = (c as any).regiao || getRegiaoFromUF(c.uf);
-      const estado = c.uf || '-';
+    resumoData.forEach(r => {
+      const estado = r.uf || '-';
+      const regiao = getRegiaoFromUF(r.uf);
       const key = `${regiao}|${estado}`;
       const existing = map.get(key);
       if (existing) {
-        existing.quantidade += 1;
+        existing.quantidade += r.quantidade;
       } else {
-        map.set(key, { regiao, estado, quantidade: 1 });
+        map.set(key, { regiao, estado, quantidade: r.quantidade });
       }
     });
-    return Array.from(map.values()).sort((a, b) => {
-      const regCmp = a.regiao.localeCompare(b.regiao);
-      if (regCmp !== 0) return regCmp;
-      return a.estado.localeCompare(b.estado);
-    });
-  })();
+    const arr = Array.from(map.values());
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortCol === 'Quantidade') {
+      arr.sort((a, b) => dir * (a.quantidade - b.quantidade));
+    } else if (sortCol === 'Estado' || sortCol === 'UF') {
+      arr.sort((a, b) => dir * a.estado.localeCompare(b.estado));
+    } else if (sortCol === 'Região') {
+      arr.sort((a, b) => dir * (a.regiao.localeCompare(b.regiao) || a.estado.localeCompare(b.estado)));
+    } else {
+      // padrão: região e depois estado
+      arr.sort((a, b) => a.regiao.localeCompare(b.regiao) || a.estado.localeCompare(b.estado));
+    }
+    return arr;
+  }, [resumoData, sortCol, sortDir]);
+
+  // Cabeçalho de coluna com ordenação por clique + alça de redimensionar
+  const renderTh = (k: string, i: number) => {
+    const sortable = isSortable(k);
+    const ativo = sortCol === k;
+    return (
+      <th
+        key={k}
+        onClick={sortable ? () => handleSort(k) : undefined}
+        title={sortable ? 'Clique para ordenar' : undefined}
+        className={cn(
+          "h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap relative group",
+          sortable && "cursor-pointer select-none hover:bg-gray-50"
+        )}
+      >
+        <span className="inline-flex items-center gap-1">
+          {k}
+          {ativo && <span className="text-primary">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+        </span>
+        {i < colunasAtuais.length - 1 && (
+          <div
+            className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 transition-colors flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => handleResizeStart(k, e)}
+            onDoubleClick={(e) => { e.stopPropagation(); handleAutoFitColumn(k); }}
+            title="Arraste para redimensionar. Duplo clique para ajustar ao conteúdo."
+          >
+            <div className="w-0.5 h-6 bg-border group-hover:bg-primary/50 rounded" />
+          </div>
+        )}
+      </th>
+    );
+  };
+
+  // Unidades: ordenação no cliente (sobre o conjunto completo de unidades únicas)
+  const unidadesOrdenadas = useMemo(() => {
+    const arr = [...unidadesData];
+    const campoPorColuna: Record<string, string> = {
+      UF: 'uf', Esfera: 'esfera', Poder: 'poder', OrgaoPNCP: 'orgao_pncp',
+      CNPJ: 'cnpj', Unidade: 'unidade', UnCod: 'un_cod', Municipio: 'municipio',
+    };
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortCol === 'OrgaoAtiva') {
+      arr.sort((a, b) => dir * (vinculosMap[a.cnpj]?.orgao_nome || '').localeCompare(vinculosMap[b.cnpj]?.orgao_nome || '', 'pt'));
+    } else if (campoPorColuna[sortCol]) {
+      const campo = campoPorColuna[sortCol];
+      arr.sort((a, b) => dir * String(a[campo] ?? '').localeCompare(String(b[campo] ?? ''), 'pt', { numeric: true }));
+    }
+    return arr;
+  }, [unidadesData, sortCol, sortDir, vinculosMap]);
+
+  const unidadesPaginadas = useMemo(() => {
+    const start = (currentPage - 1) * PER_PAGE;
+    return unidadesOrdenadas.slice(start, start + PER_PAGE);
+  }, [unidadesOrdenadas, currentPage]);
 
   const tabelaLargura = colunasAtuais.reduce((s, k) => s + getWidth(k), 0);
 
@@ -1057,9 +1402,9 @@ export default function LicitacaoConsulta() {
               </div>
             )}
             {activeTab !== 'conferir' && activeTab !== 'enviadas' && (
-              <Button variant="outline" size="sm">
-                <Download className="w-4 h-4 mr-2" />
-                Exportar
+              <Button variant="outline" size="sm" onClick={handleExportar} disabled={exporting}>
+                {exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                {exporting ? 'Exportando...' : 'Exportar'}
               </Button>
             )}
             {activeTab === 'todas' && (
@@ -1158,18 +1503,18 @@ export default function LicitacaoConsulta() {
                     </RadioGroup>
                     <div className="flex gap-2 items-center">
                       <Input
-                        type="date"
+                        type="datetime-local"
                         placeholder="Dt Início"
                         value={filtroDataInicio}
                         onChange={(e) => setFiltroDataInicio(e.target.value)}
-                        className="w-[140px]"
+                        className="w-[175px] text-xs"
                       />
                       <Input
-                        type="date"
+                        type="datetime-local"
                         placeholder="Dt. Fim"
                         value={filtroDataFim}
                         onChange={(e) => setFiltroDataFim(e.target.value)}
-                        className="w-[140px]"
+                        className="w-[175px] text-xs"
                       />
                     </div>
                   </div>
@@ -1206,7 +1551,13 @@ export default function LicitacaoConsulta() {
                     <Label className="text-sm font-medium">Layout</Label>
                     <RadioGroup
                       value={filtroLayout}
-                      onValueChange={(v) => setFiltroLayout(v as typeof filtroLayout)}
+                      onValueChange={(v) => {
+                        // Ativa o loading imediatamente para a tabela não tentar
+                        // renderizar os dados do layout anterior (evita travar o navegador).
+                        // O recarregamento é disparado pelo useEffect de [filtroLayout].
+                        setLoading(true);
+                        setFiltroLayout(v as typeof filtroLayout);
+                      }}
                       className="flex flex-col gap-1.5 text-xs"
                     >
                       <div className="flex items-center space-x-2">
@@ -1423,7 +1774,7 @@ export default function LicitacaoConsulta() {
             <div className="flex items-center justify-center h-64 flex-1">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          ) : contratacoes.length === 0 ? (
+          ) : (activeTab === 'todas' && filtroLayout === 'resumido' ? dadosResumidos.length === 0 : activeTab === 'todas' && filtroLayout === 'unidades' ? unidadesOrdenadas.length === 0 : contratacoes.length === 0) ? (
             <div className="text-center py-12 text-muted-foreground flex-1">
               Nenhuma licitação encontrada
             </div>
@@ -1487,21 +1838,7 @@ export default function LicitacaoConsulta() {
                   </colgroup>
                   <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
                     <tr className="bg-white border-b">
-                      {colunasAtuais.map((k, i) => (
-                        <th key={k} className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white relative group">
-                          {k}
-                          {i < colunasAtuais.length - 1 && (
-                            <div
-                              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 transition-colors flex items-center justify-center"
-                              onMouseDown={(e) => handleResizeStart(k, e)}
-                              onDoubleClick={(e) => { e.stopPropagation(); handleAutoFitColumn(k); }}
-                              title="Arraste para redimensionar. Duplo clique para ajustar ao conteúdo."
-                            >
-                              <div className="w-0.5 h-6 bg-border group-hover:bg-primary/50 rounded" />
-                            </div>
-                          )}
-                        </th>
-                      ))}
+                      {colunasAtuais.map((k, i) => renderTh(k, i))}
                     </tr>
                   </thead>
                   <tbody className="[&_tr:last-child]:border-0">
@@ -1513,6 +1850,12 @@ export default function LicitacaoConsulta() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                    <tr>
+                      <td colSpan={2} className="p-4 py-2 text-sm font-bold text-[#1A1A1A]">Total</td>
+                      <td className="p-4 py-2 text-sm font-bold text-[#1A1A1A]">{totalRecords.toLocaleString('pt-BR')}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               ) : filtroLayout === 'detalhado' ? (
                 <table className="caption-bottom text-sm table-fixed border-collapse" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
@@ -1521,21 +1864,7 @@ export default function LicitacaoConsulta() {
                   </colgroup>
                   <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
                     <tr className="bg-white border-b">
-                      {colunasAtuais.map((k, i) => (
-                        <th key={k} className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap relative group">
-                          {k}
-                          {i < colunasAtuais.length - 1 && (
-                            <div
-                              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 transition-colors flex items-center justify-center"
-                              onMouseDown={(e) => handleResizeStart(k, e)}
-                              onDoubleClick={(e) => { e.stopPropagation(); handleAutoFitColumn(k); }}
-                              title="Arraste para redimensionar. Duplo clique para ajustar ao conteúdo."
-                            >
-                              <div className="w-0.5 h-6 bg-border group-hover:bg-primary/50 rounded" />
-                            </div>
-                          )}
-                        </th>
-                      ))}
+                      {colunasAtuais.map((k, i) => renderTh(k, i))}
                     </tr>
                   </thead>
                   <tbody className="[&_tr:last-child]:border-0">
@@ -1543,7 +1872,7 @@ export default function LicitacaoConsulta() {
                       <tr key={c.id} className="border-b transition-colors hover:bg-muted/50">
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).regiao || getRegiaoFromUF(c.uf)}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{c.uf || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{c.cd_pn ?? '-'}</td>
+                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{c.num_licitacao || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{formatarNumAtiva(c.num_ativa || c.n_controle_ativa || null, (c as any).created_at)}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{formatDate((c as any).dt_alterado_ativa)}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">{c.titulo || '-'}</td>
@@ -1578,47 +1907,34 @@ export default function LicitacaoConsulta() {
                   </colgroup>
                   <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
                     <tr className="bg-white border-b">
-                      {colunasAtuais.map((k, i) => (
-                        <th key={k} className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap relative group">
-                          {k}
-                          {i < colunasAtuais.length - 1 && (
-                            <div
-                              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 transition-colors flex items-center justify-center"
-                              onMouseDown={(e) => handleResizeStart(k, e)}
-                              onDoubleClick={(e) => { e.stopPropagation(); handleAutoFitColumn(k); }}
-                              title="Arraste para redimensionar. Duplo clique para ajustar ao conteúdo."
-                            >
-                              <div className="w-0.5 h-6 bg-border group-hover:bg-primary/50 rounded" />
-                            </div>
-                          )}
-                        </th>
-                      ))}
+                      {colunasAtuais.map((k, i) => renderTh(k, i))}
                     </tr>
                   </thead>
                   <tbody className="[&_tr:last-child]:border-0">
-                    {contratacoes.map((c) => {
-                      const cnpj = getCnpj(c);
+                    {unidadesPaginadas.map((u) => {
+                      const cnpj = u.cnpj || null;
                       const orgaoAtiva = cnpj ? vinculosMap[cnpj]?.orgao_nome : undefined;
-                      const isSelected = selectedUnidade?.id === c.id;
+                      const key = `${u.cnpj ?? ''}|${u.un_cod ?? ''}`;
+                      const isSelected = !!selectedUnidade && `${selectedUnidade.cnpj ?? ''}|${selectedUnidade.un_cod ?? ''}` === key;
                       return (
                         <tr
-                          key={c.id}
+                          key={key}
                           className={cn("border-b transition-colors cursor-pointer", isSelected ? "bg-[#02572E] text-white" : "hover:bg-muted/50")}
-                          onClick={() => handleSelectUnidade(c)}
+                          onClick={() => handleSelectUnidade(u)}
                         >
-                          <td className="p-4 align-middle py-1.5 text-sm">{c.uf || '-'}</td>
-                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).esfera || '-'}</td>
-                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).poder || '-'}</td>
-                          <td className="p-4 align-middle py-1.5 text-sm max-w-xs truncate">{c.orgao_pncp || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{u.uf || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{u.esfera || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{u.poder || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm max-w-xs truncate">{u.orgao_pncp || '-'}</td>
                           <td className="p-4 align-middle py-1.5 text-sm">{cnpj || '-'}</td>
-                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).unidade || '-'}</td>
-                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).un_cod || '-'}</td>
-                          <td className="p-4 align-middle py-1.5 text-sm">{(c as any).municipio || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{u.unidade || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{u.un_cod || '-'}</td>
+                          <td className="p-4 align-middle py-1.5 text-sm">{u.municipio || '-'}</td>
                           <td className={cn("p-4 align-middle py-1.5 text-sm font-medium", orgaoAtiva ? (isSelected ? 'text-green-200' : 'text-green-700') : 'opacity-40')}>
                             {orgaoAtiva || '-'}
                           </td>
-                          <td className="p-4 align-middle py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-700 p-0" onClick={() => navigate(`/licitacoes/cadastro?id=${c.id}`)} title="Visualizar"><Eye className="w-3.5 h-3.5" /></Button>
+                          <td className="p-4 align-middle py-1.5 text-right text-xs text-muted-foreground" onClick={(e) => e.stopPropagation()}>
+                            {u.qtd_licitacoes ? `${u.qtd_licitacoes} lic.` : ''}
                           </td>
                         </tr>
                       );
@@ -1632,9 +1948,22 @@ export default function LicitacaoConsulta() {
                     <table className="caption-bottom text-sm border-collapse w-full">
                       <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
                         <tr className="bg-white border-b">
-                          <th className="h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white w-[60px]">Id</th>
-                          <th className="h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white">ModalidadePncp</th>
-                          <th className="h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white">TipoLicitacaoAtiva</th>
+                          {['Id', 'ModalidadePncp', 'TipoLicitacaoAtiva'].map((col, idx) => (
+                            <th
+                              key={col}
+                              onClick={() => handleSort(col)}
+                              title="Clique para ordenar"
+                              className={cn(
+                                "h-10 px-4 text-left align-middle font-bold text-xs text-[#1A1A1A] bg-white cursor-pointer select-none hover:bg-gray-50",
+                                idx === 0 && "w-[60px]"
+                              )}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                {col}
+                                {sortCol === col && <span className="text-primary">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                              </span>
+                            </th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody className="[&_tr:last-child]:border-0">
@@ -1716,21 +2045,7 @@ export default function LicitacaoConsulta() {
                   </colgroup>
                   <thead className="sticky top-0 bg-white z-20 shadow-sm [&_tr]:border-b">
                     <tr className="bg-white border-b">
-                      {colunasAtuais.map((k, i) => (
-                        <th key={k} className="h-12 px-4 text-left align-middle font-medium py-1.5 text-xs font-bold text-[#1A1A1A] bg-white relative group">
-                          {k}
-                          {i < colunasAtuais.length - 1 && (
-                            <div
-                              className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/20 transition-colors flex items-center justify-center"
-                              onMouseDown={(e) => handleResizeStart(k, e)}
-                              onDoubleClick={(e) => { e.stopPropagation(); handleAutoFitColumn(k); }}
-                              title="Arraste para redimensionar. Duplo clique para ajustar ao conteúdo."
-                            >
-                              <div className="w-0.5 h-6 bg-border group-hover:bg-primary/50 rounded" />
-                            </div>
-                          )}
-                        </th>
-                      ))}
+                      {colunasAtuais.map((k, i) => renderTh(k, i))}
                     </tr>
                   </thead>
                   <tbody className="[&_tr:last-child]:border-0">
@@ -1742,6 +2057,12 @@ export default function LicitacaoConsulta() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                    <tr>
+                      <td colSpan={2} className="p-4 py-2 text-sm font-bold text-[#1A1A1A]">Total</td>
+                      <td className="p-4 py-2 text-sm font-bold text-[#1A1A1A]">{totalRecords.toLocaleString('pt-BR')}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               )}
             </div>
@@ -1787,11 +2108,11 @@ export default function LicitacaoConsulta() {
           ) : null}
         </div>
 
-        {/* Paginação — apenas na aba Lista Completa */}
-        {activeTab === 'todas' && !loading && totalPages > 1 && (
+        {/* Paginação — apenas na aba Lista Completa e layout NÃO resumido */}
+        {activeTab === 'todas' && !loading && totalPages > 1 && filtroLayout !== 'resumido' && (
           <div className="flex-shrink-0 border-t border-border bg-white px-4 py-2 flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
-              {totalRecords.toLocaleString('pt-BR')} licitações — Página {currentPage} de {totalPages}
+              {totalRecords.toLocaleString('pt-BR')} {filtroLayout === 'unidades' ? 'unidades' : 'licitações'} — Página {currentPage} de {totalPages}
             </span>
             <div className="flex items-center gap-1">
               <Button
@@ -1956,9 +2277,10 @@ export default function LicitacaoConsulta() {
                   size="sm"
                   className="bg-[#02572E] text-white hover:bg-[#024a27]"
                   onClick={handleAssociarOrgao}
-                  disabled={!vinculoOrgaoId}
+                  disabled={!vinculoOrgaoId || associando}
                 >
-                  Associar
+                  {associando && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {associando ? 'Associando...' : 'Associar'}
                 </Button>
                 {vinculoOrgaoId && (
                   <Button

@@ -8,6 +8,9 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    // Não observar planilhas baixadas/exportadas (evita crash do watcher
+    // quando um .xlsx fica travado, ex.: aberto no Excel).
+    watch: { ignored: ["**/*.xlsx"] },
     proxy: {
       "/api": {
         target: "http://localhost:3000",
