@@ -78,6 +78,15 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
     return reply.send(orgao);
   });
 
+  // DELETE /api/orgaos/:id
+  fastify.delete('/api/orgaos/:id', { preHandler: [requireAuth] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    // Remover registros relacionados primeiro
+    await fastify.prisma.orgaos_grupos.deleteMany({ where: { orgao_id: id } });
+    await fastify.prisma.orgaos.delete({ where: { id } });
+    return reply.status(204).send();
+  });
+
   // GET /api/orgaos/:id/grupos — grupos de um orgao
   fastify.get('/api/orgaos/:id/grupos', { preHandler: [requireAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -120,11 +129,20 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
       cnpj: string; orgao_id: string | null; orgao_nome: string | null;
     };
 
-    const result = await fastify.prisma.$executeRaw`
-      INSERT INTO orgaos_vinculados (id, cnpj, orgao_id, orgao_nome, created_at, updated_at)
-      VALUES (gen_random_uuid(), ${cnpj}, ${orgao_id}, ${orgao_nome}, NOW(), NOW())
-      ON CONFLICT (cnpj) DO UPDATE SET orgao_id = ${orgao_id}, orgao_nome = ${orgao_nome}, updated_at = NOW()
-    `;
+    if (!cnpj) return reply.status(400).send({ error: 'CNPJ obrigatório' });
+
+    // Usa a API tipada do Prisma (trata orgao_id como uuid corretamente).
+    const existente = await fastify.prisma.orgaos_vinculados.findFirst({ where: { cnpj } });
+    if (existente) {
+      await fastify.prisma.orgaos_vinculados.update({
+        where: { id: existente.id },
+        data: { orgao_id, orgao_nome },
+      });
+    } else {
+      await fastify.prisma.orgaos_vinculados.create({
+        data: { cnpj, orgao_id, orgao_nome },
+      });
+    }
 
     return reply.send({ ok: true });
   });
