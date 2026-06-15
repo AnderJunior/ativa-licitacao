@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { Loader2, Eye, Filter, X, Download, ChevronsUpDown, Search } from 'lucide-react';
+import { Loader2, Eye, Filter, X, Download, ChevronsUpDown, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
@@ -286,6 +286,8 @@ export default function LicitacaoConsulta() {
   const [vinculoOrgaoNome, setVinculoOrgaoNome] = useState('');
   const [buscarOrgaoUnidadeOpen, setBuscarOrgaoUnidadeOpen] = useState(false);
   const [associando, setAssociando] = useState(false);
+  // Minimizar o painel inferior de detalhes/associação da unidade
+  const [painelUnidadeMin, setPainelUnidadeMin] = useState(false);
   const [viewOrgaoDialogOpen, setViewOrgaoDialogOpen] = useState(false);
   const [orgaoViewData, setOrgaoViewData] = useState<any>(null);
   const [loadingOrgaoView, setLoadingOrgaoView] = useState(false);
@@ -567,9 +569,9 @@ export default function LicitacaoConsulta() {
       let sheetName = 'Licitacoes';
 
       if (activeTab === 'todas' && filtroLayout === 'resumido') {
-        aoa.push(['Regiao', 'Estado', 'Quantidade']);
-        dadosResumidos.forEach(d => aoa.push([d.regiao, d.estado, d.quantidade]));
-        aoa.push(['Total', '', totalRecords]);
+        aoa.push(['Regiao', 'Estado', 'Quant']);
+        dadosResumidos.forEach(d => aoa.push([d.regiao, ufComNome(d.estado), d.quantidade]));
+        aoa.push(['_Total', 'UF', totalRecords]);
         sheetName = 'Resumido';
       } else if (activeTab === 'todas' && filtroLayout === 'modalidade') {
         const all = await fetchTodosFiltrados(SELECT_POR_LAYOUT.modalidade);
@@ -580,14 +582,15 @@ export default function LicitacaoConsulta() {
         for (const [m, tl] of map) aoa.push([i++, m, tl ? `${tl.sigla} ${tl.descricao || ''}`.trim() : '']);
         sheetName = 'Modalidade';
       } else if (activeTab === 'todas' && filtroLayout === 'unidades') {
-        // Exporta as unidades únicas já carregadas (respeitando a ordenação atual).
-        aoa.push(['UF', 'Esfera', 'Poder', 'OrgaoPNCP', 'CNPJ', 'Unidade', 'UnCod', 'Municipio', 'OrgaoAtiva', 'QtdLicitacoes']);
+        // Exporta as unidades únicas já carregadas (respeitando a ordenação atual),
+        // no formato do modelo: UF-Nome, Esfera/Poder por extenso, OrgaoAtiva do vínculo.
+        aoa.push(['UF', 'Esfera', 'Poder', 'OrgaoPNCP', 'CNPJ', 'Unidade', 'UnCod', 'Municipio', 'OrgaoAtiva']);
         unidadesOrdenadas.forEach(u => {
           const cnpj = u.cnpj || '';
           aoa.push([
             ufComNome(u.uf), esferaNome(u.esfera), poderNome(u.poder),
             u.orgao_pncp || '', cnpj, u.unidade || '', u.un_cod || '',
-            u.municipio || '', (cnpj ? vinculosMap[cnpj]?.orgao_nome : '') || '', u.qtd_licitacoes ?? 0,
+            u.municipio || '', (cnpj ? vinculosMap[cnpj]?.orgao_nome : '') || '',
           ]);
         });
         sheetName = 'Unidades';
@@ -2111,7 +2114,17 @@ export default function LicitacaoConsulta() {
         {/* Paginação — apenas na aba Lista Completa e layout NÃO resumido */}
         {activeTab === 'todas' && !loading && totalPages > 1 && filtroLayout !== 'resumido' && (
           <div className="flex-shrink-0 border-t border-border bg-white px-4 py-2 flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">
+            <span className="text-muted-foreground flex items-center gap-2">
+              {filtroLayout === 'unidades' && selectedUnidade && (
+                <button
+                  type="button"
+                  onClick={() => setPainelUnidadeMin(m => !m)}
+                  title={painelUnidadeMin ? 'Mostrar painel da unidade' : 'Minimizar painel da unidade'}
+                  className="inline-flex items-center justify-center h-6 w-6 rounded border border-border text-[#1A1A1A] hover:bg-muted"
+                >
+                  {painelUnidadeMin ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+              )}
               {totalRecords.toLocaleString('pt-BR')} {filtroLayout === 'unidades' ? 'unidades' : 'licitações'} — Página {currentPage} de {totalPages}
             </span>
             <div className="flex items-center gap-1">
@@ -2201,7 +2214,7 @@ export default function LicitacaoConsulta() {
         )}
 
         {/* Painel de associação - layout Unidades */}
-        {activeTab === 'todas' && filtroLayout === 'unidades' && selectedUnidade && (
+        {activeTab === 'todas' && filtroLayout === 'unidades' && selectedUnidade && !painelUnidadeMin && (
           <div className="h-40 flex-shrink-0 border-t border-border flex gap-0 bg-white">
             {/* Info da unidade PNCP */}
             <div className="w-72 flex-shrink-0 p-3 overflow-auto border-r border-border text-xs text-[#1A1A1A] space-y-0.5">
