@@ -7,7 +7,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { Loader2, Plus, Pencil, Trash2, Eye, ArrowLeft, X, Search } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Eye, ArrowLeft, X, Search, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { usePermissoes } from '@/contexts/PermissoesContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,7 @@ interface RamoAtividade {
   nome: string;
   e_grupo: boolean;
   grupo_relacionado: string | null;
+  palavras_chaves?: string[];
   children?: RamoAtividade[];
 }
 
@@ -101,6 +103,18 @@ function normalizarTexto(texto: string): string {
   return texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Remove caracteres de controle inv\u00e1lidos para XML (corromperiam o .xlsx).
+// XML 1.0 s\u00f3 aceita tab(9), LF(10), CR(13) e c\u00f3digos >= 32 (exceto 0xFFFE/0xFFFF).
+function limparXML<T>(v: T): T {
+  if (typeof v !== 'string') return v;
+  let out = '';
+  for (let i = 0; i < v.length; i++) {
+    const c = v.charCodeAt(i);
+    if (c === 9 || c === 10 || c === 13 || (c >= 32 && c !== 0xfffe && c !== 0xffff)) out += v[i];
+  }
+  return out as unknown as T;
+}
+
 // ─── Component ───────────────────────────────────────────
 export default function Clientes() {
   const { canSalvar, canExcluir } = usePermissoes();
@@ -112,6 +126,8 @@ export default function Clientes() {
   const [filtroNome, setFiltroNome] = useState('');
   const [filtroCidade, setFiltroCidade] = useState('');
   const [filtroUF, setFiltroUF] = useState('');
+  const [filtroStatus, setFiltroStatus] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   // ─ Formulário ─
   const [view, setView] = useState<'lista' | 'form'>('lista');
@@ -135,9 +151,13 @@ export default function Clientes() {
   // ─ Pesquisa por digitação na árvore ─
   const [searchBuffer, setSearchBuffer] = useState('');
   const [highlightedAtividadeId, setHighlightedAtividadeId] = useState<string | null>(null);
+  const highlightedIdRef = useRef<string | null>(null);
+  // Manter ref sincronizado com state
+  useEffect(() => { highlightedIdRef.current = highlightedAtividadeId; }, [highlightedAtividadeId]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastKeyTimeRef = useRef<number>(0);
+  const searchBufferRef = useRef('');
   const atividadesScrollRef = useRef<HTMLDivElement>(null);
 
   const selectedUFs = perfis[perfilAtivo]?.ufs || new Set<string>();
@@ -225,13 +245,18 @@ export default function Clientes() {
   };
 
   const openClienteForm = async (cliente: Cliente, mode: 'editar' | 'visualizar') => {
+    // Formatar cortesia_bloqueio para YYYY-MM-DD (input type="date" exige esse formato)
+    let cortesiaFormatada = cliente.cortesia_bloqueio;
+    if (cortesiaFormatada && cortesiaFormatada.includes('T')) {
+      cortesiaFormatada = cortesiaFormatada.split('T')[0];
+    }
     setForm({
       nome: cliente.nome, contato: cliente.contato || '', fone: cliente.fone || '',
       fax: cliente.fax || '', endereco: cliente.endereco || '', bairro: cliente.bairro || '',
       cidade: cliente.cidade || '', uf: cliente.uf || '', cep: cliente.cep || '',
       cnpj: cliente.cnpj || '', cpf: cliente.cpf || '', cod_interno: cliente.cod_interno || '',
       obs: cliente.obs || '', cliente_ativo: cliente.cliente_ativo,
-      cortesia_bloqueio: cliente.cortesia_bloqueio, alterado_por: cliente.alterado_por,
+      cortesia_bloqueio: cortesiaFormatada, alterado_por: cliente.alterado_por,
     });
     setEditingId(cliente.id);
     setFormMode(mode);
@@ -316,6 +341,129 @@ export default function Clientes() {
     setSaving(false);
   };
 
+  // ─── Exportar XLSX ─────────────────────────────────────
+  const handleExportar = async () => {
+    setExporting(true);
+    try {
+      // Busca clientes com emails do backend
+      const clientesComEmails = await api.get<any[]>('/api/clientes/export');
+
+      // Filtra com os mesmos critérios da lista
+      let filtrados = clientesComEmails;
+      if (filtroNome) filtrados = filtrados.filter(c => c.nome.toLowerCase().includes(filtroNome.toLowerCase()));
+      if (filtroCidade) filtrados = filtrados.filter(c => (c.cidade || '').toLowerCase().includes(filtroCidade.toLowerCase()));
+      if (filtroUF) filtrados = filtrados.filter(c => c.uf === filtroUF);
+      if (filtroStatus === 'ativo') filtrados = filtrados.filter(c => c.cliente_ativo);
+      if (filtroStatus === 'inativo') filtrados = filtrados.filter(c => !c.cliente_ativo);
+
+      // Monta as linhas: 1 linha por email, se não tem email cria 1 linha sem email
+      const rows: { 'Cod. Interno': string; 'Nome/Empresa': string; 'Email': string; 'Caixa': string }[] = [];
+      for (const c of filtrados) {
+        const emails = c.emails || [];
+        if (emails.length === 0) {
+          rows.push({
+            'Cod. Interno': c.id || '',
+            'Nome/Empresa': c.nome || '',
+            'Email': '',
+            'Caixa': '',
+          });
+        } else {
+          for (const em of emails) {
+            rows.push({
+              'Cod. Interno': c.id || '',
+              'Nome/Empresa': c.nome || '',
+              'Email': em.email || '',
+              'Caixa': em.tipo || '',
+            });
+          }
+        }
+      }
+
+      const rowsLimpo = rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, limparXML(v)])));
+      const ws = XLSX.utils.json_to_sheet(rowsLimpo);
+      // Ajustar largura das colunas
+      ws['!cols'] = [
+        { wch: 14 }, // Cod. Interno
+        { wch: 40 }, // Nome/Empresa
+        { wch: 40 }, // Email
+        { wch: 14 }, // Caixa
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Clientes');
+      XLSX.writeFile(wb, 'clientes.xlsx');
+      toast.success(`Exportados ${rows.length} registros`);
+    } catch (err: any) {
+      toast.error('Erro ao exportar: ' + err.message);
+    }
+    setExporting(false);
+  };
+
+  // ─── Exportar Cliente Individual (formato perfil completo) ──
+  const handleExportarCliente = () => {
+    const aoa: (string | number)[][] = [];
+
+    // Cabeçalho: Cliente
+    aoa.push(['Cliente:', form.nome || '', '']);
+
+    // Provedor / Email (a partir dos e-mails do cliente: tipo = provedor)
+    aoa.push(['Provedor', 'Email', '']);
+    if (emails.length > 0) {
+      for (const e of emails) aoa.push([e.tipo || '', e.email || '', '']);
+    } else {
+      aoa.push(['', '', '']);
+    }
+    aoa.push(['', '', '']);
+
+    // Regiões × Perfis (UFs selecionadas marcadas com [ ])
+    const perfisExport = perfis.length > 0
+      ? perfis
+      : [{ nome: 'A', ufs: new Set<string>(), ramos: new Set<string>() }];
+
+    aoa.push(['Região', ...perfisExport.map((_, i) => `Perfil Nº ${i + 1}`)]);
+    for (const { regiao, ufs } of REGIOES) {
+      const row: string[] = [regiao];
+      for (const p of perfisExport) {
+        row.push(ufs.map(uf => (p.ufs.has(uf) ? ` [${uf}]  ` : `  ${uf}  `)).join(','));
+      }
+      aoa.push(row);
+    }
+    aoa.push(['', '', '']);
+
+    // Cabeçalho da árvore de atividades
+    const selHeaders = perfisExport.length === 1
+      ? ['Selecionado?']
+      : perfisExport.map(p => `Perfil ${p.nome}`);
+    aoa.push([...selHeaders, 'Descrição dos itens', 'Palavras']);
+
+    // Árvore completa de ramos (achatada, com indentação por nível)
+    const walk = (nodes: RamoAtividade[], depth: number) => {
+      for (const node of nodes) {
+        const prefix = '|    '.repeat(depth);
+        const sel = perfisExport.map(p => (p.ramos.has(node.id) ? 'Sim' : ''));
+        const palavras = (node.palavras_chaves || []).join('; ');
+        aoa.push([...sel, prefix + node.nome, palavras]);
+        if (node.children?.length) walk(node.children, depth + 1);
+      }
+    };
+    walk(ramos, 0);
+
+    const aoaLimpo = aoa.map(row => row.map(limparXML));
+    const ws = XLSX.utils.aoa_to_sheet(aoaLimpo);
+    ws['!cols'] = [
+      ...Array(selHeaders.length).fill({ wch: 12 }),
+      { wch: 55 },
+      { wch: 120 },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const sheetName = (form.nome || 'Perfil').replace(/[\\/:*?[\]]/g, '').slice(0, 31) || 'Perfil';
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+    const nomeArquivo = (form.nome || 'cliente').replace(/[\\/:*?"<>|]/g, '').trim();
+    XLSX.writeFile(wb, `${nomeArquivo}.xlsx`);
+    toast.success('Dados do cliente exportados!');
+  };
+
   // ─── Delete ────────────────────────────────────────────
   const handleDelete = async (id: string) => {
     try {
@@ -332,6 +480,8 @@ export default function Clientes() {
     if (filtroNome && !c.nome.toLowerCase().includes(filtroNome.toLowerCase())) return false;
     if (filtroCidade && !(c.cidade || '').toLowerCase().includes(filtroCidade.toLowerCase())) return false;
     if (filtroUF && c.uf !== filtroUF) return false;
+    if (filtroStatus === 'ativo' && !c.cliente_ativo) return false;
+    if (filtroStatus === 'inativo' && c.cliente_ativo) return false;
     return true;
   });
 
@@ -404,105 +554,155 @@ export default function Clientes() {
     if (elemento && atividadesScrollRef.current) {
       elemento.scrollIntoView({ behavior: 'smooth', block: 'center' });
       if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+      highlightedIdRef.current = atividadeId;
       setHighlightedAtividadeId(atividadeId);
-      highlightTimeoutRef.current = setTimeout(() => setHighlightedAtividadeId(null), 2000);
+      // Foca a div para setas funcionarem
+      atividadesScrollRef.current.focus();
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      searchTimeoutRef.current = setTimeout(() => { setSearchBuffer(''); lastKeyTimeRef.current = 0; }, 500);
+      searchTimeoutRef.current = setTimeout(() => { searchBufferRef.current = ''; setSearchBuffer(''); lastKeyTimeRef.current = 0; }, 500);
     }
   };
 
   const handleItemClick = (atividadeId: string) => {
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    highlightedIdRef.current = atividadeId;
     setHighlightedAtividadeId(atividadeId);
-    highlightTimeoutRef.current = setTimeout(() => setHighlightedAtividadeId(null), 2000);
+    // Foca a div scrollável para que as setas funcionem
+    atividadesScrollRef.current?.focus();
   };
 
-  // ─── Pesquisa por digitação na área de atividades ─────────
-  useEffect(() => {
-    if (activeTab !== 'licitacoes') return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const activeElement = document.activeElement;
-      const atividadesArea = atividadesScrollRef.current;
-      if (!atividadesArea || !activeElement) return;
-      const isInArea = atividadesArea.contains(activeElement);
-      if (!isInArea) return;
-      if (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA') return;
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      if (e.key.length > 1 && !['Backspace', 'Delete', 'Space'].includes(e.key)) return;
-
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        setSearchBuffer(prev => {
-          if (prev.length > 0) {
-            const novoBuffer = prev.slice(0, -1);
-            if (novoBuffer.length > 0) {
-              setTimeout(() => {
-                const found = buscarAtividadePorNome(ramos, novoBuffer);
-                if (found) scrollParaAtividade(found.id);
-                else setHighlightedAtividadeId(null);
-              }, 0);
-            } else {
-              setHighlightedAtividadeId(null);
-            }
-            return novoBuffer;
-          }
-          setHighlightedAtividadeId(null);
-          return '';
-        });
-        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-        return;
+  // ─── Flatten tree para navegação por setas ─────────────────
+  const flattenTree = useCallback((nodes: RamoAtividade[]): string[] => {
+    const result: string[] = [];
+    const recurse = (items: RamoAtividade[]) => {
+      for (const item of items) {
+        result.push(item.id);
+        if (item.children?.length) recurse(item.children);
       }
+    };
+    recurse(nodes);
+    return result;
+  }, []);
 
-      if (e.key === ' ') {
-        e.preventDefault();
-        if (highlightedAtividadeId) {
-          toggleRamo(highlightedAtividadeId);
-          setSearchBuffer('');
-          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-          return;
-        }
-        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-        const agora = Date.now();
-        const tempoDesdeUltima = agora - lastKeyTimeRef.current;
-        const deveResetar = tempoDesdeUltima > 800 || searchBuffer === '';
-        lastKeyTimeRef.current = agora;
-        const novoBuffer = deveResetar ? ' ' : (searchBuffer + ' ');
-        setSearchBuffer(novoBuffer);
-        const found = buscarAtividadePorNome(ramos, novoBuffer);
-        if (found) { scrollParaAtividade(found.id); }
-        else {
-          setHighlightedAtividadeId(null);
-          if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-          searchTimeoutRef.current = setTimeout(() => { setSearchBuffer(''); setHighlightedAtividadeId(null); }, 2000);
-        }
-        return;
-      }
 
-      if (!/^[a-zA-Z0-9]$/.test(e.key)) return;
+  // ─── Handler de teclado direto na div de atividades ────────
+  const handleAtividadesKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // ── Navegação por setas ──
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
+      e.stopPropagation();
+      const flatIds = flattenTree(ramos);
+      if (flatIds.length === 0) return;
+      const curId = highlightedIdRef.current;
+      const currentIdx = curId ? flatIds.indexOf(curId) : -1;
+      let nextIdx: number;
+      if (e.key === 'ArrowDown') {
+        nextIdx = currentIdx < flatIds.length - 1 ? currentIdx + 1 : 0;
+      } else {
+        nextIdx = currentIdx > 0 ? currentIdx - 1 : flatIds.length - 1;
+      }
+      const nextId = flatIds[nextIdx];
+      highlightedIdRef.current = nextId;
+      setHighlightedAtividadeId(nextId);
+      searchBufferRef.current = '';
+      setSearchBuffer('');
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+      const elemento = document.querySelector(`[data-atividade-id="${nextId}"]`);
+      if (elemento) elemento.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+
+    // ── Enter para marcar/desmarcar ──
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const curId = highlightedIdRef.current;
+      if (curId && formMode !== 'visualizar') {
+        toggleRamo(curId);
+      }
+      return;
+    }
+
+    // ── Espaço para marcar/desmarcar ──
+    if (e.key === ' ') {
+      e.preventDefault();
+      const curId = highlightedIdRef.current;
+      if (curId) {
+        if (formMode !== 'visualizar') toggleRamo(curId);
+        searchBufferRef.current = '';
+        setSearchBuffer('');
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        return;
+      }
+      // Se não tem highlight, busca por nome com espaço
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       const agora = Date.now();
       const tempoDesdeUltima = agora - lastKeyTimeRef.current;
-      const deveResetar = tempoDesdeUltima > 800 || searchBuffer === '';
+      const deveResetar = tempoDesdeUltima > 800 || searchBufferRef.current === '';
       lastKeyTimeRef.current = agora;
-      const novoBuffer = deveResetar ? e.key.toLowerCase() : (searchBuffer + e.key.toLowerCase());
+      const novoBuffer = deveResetar ? ' ' : (searchBufferRef.current + ' ');
+      searchBufferRef.current = novoBuffer;
       setSearchBuffer(novoBuffer);
       const found = buscarAtividadePorNome(ramos, novoBuffer);
       if (found) { scrollParaAtividade(found.id); }
       else {
         setHighlightedAtividadeId(null);
         if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-        searchTimeoutRef.current = setTimeout(() => { setSearchBuffer(''); setHighlightedAtividadeId(null); }, 1000);
+        searchTimeoutRef.current = setTimeout(() => {
+          searchBufferRef.current = '';
+          setSearchBuffer('');
+          setHighlightedAtividadeId(null);
+        }, 2000);
       }
-    };
+      return;
+    }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+    // ── Backspace/Delete ──
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const buf = searchBufferRef.current;
+      if (buf.length > 0) {
+        const novoBuffer = buf.slice(0, -1);
+        searchBufferRef.current = novoBuffer;
+        setSearchBuffer(novoBuffer);
+        if (novoBuffer.length > 0) {
+          const found = buscarAtividadePorNome(ramos, novoBuffer);
+          if (found) scrollParaAtividade(found.id);
+          else setHighlightedAtividadeId(null);
+        } else {
+          setHighlightedAtividadeId(null);
+        }
+      } else {
+        setHighlightedAtividadeId(null);
+      }
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      return;
+    }
+
+    // ── Digitação para busca ──
+    if (e.key.length > 1) return;
+    if (!/^[a-zA-Z0-9]$/.test(e.key)) return;
+    e.preventDefault();
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    const agora = Date.now();
+    const tempoDesdeUltima = agora - lastKeyTimeRef.current;
+    const deveResetar = tempoDesdeUltima > 800 || searchBufferRef.current === '';
+    lastKeyTimeRef.current = agora;
+    const novoBuffer = deveResetar ? e.key.toLowerCase() : (searchBufferRef.current + e.key.toLowerCase());
+    searchBufferRef.current = novoBuffer;
+    setSearchBuffer(novoBuffer);
+    const found = buscarAtividadePorNome(ramos, novoBuffer);
+    if (found) { scrollParaAtividade(found.id); }
+    else {
+      setHighlightedAtividadeId(null);
       if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
-    };
-  }, [searchBuffer, ramos, highlightedAtividadeId, activeTab]);
+      searchTimeoutRef.current = setTimeout(() => {
+        searchBufferRef.current = '';
+        setSearchBuffer('');
+        setHighlightedAtividadeId(null);
+      }, 1000);
+    }
+  }, [ramos, formMode, flattenTree]);
 
   // ─── Render tree (mesmo estilo do Cadastro) ─────────────
   const renderRamoTree = (nodes: RamoAtividade[], level: number = 0): React.ReactNode => {
@@ -525,7 +725,7 @@ export default function Clientes() {
               onCheckedChange={(checked) => {
                 if (!disabled) {
                   toggleRamo(node.id);
-                  if (checked) handleItemClick(node.id);
+                  handleItemClick(node.id);
                 }
               }}
               disabled={disabled}
@@ -562,11 +762,19 @@ export default function Clientes() {
               <h1 className="text-xl font-bold text-[#1A1A1A]">
                 Clientes <span className="text-primary font-normal text-base">({clientesFiltrados.length})</span>
               </h1>
-              {canSalvar('/empresa/clientes') && (
-                <Button size="sm" className="bg-[#02572E] text-white hover:bg-[#024a27]" onClick={openNovo}>
-                  <Plus className="h-4 w-4 mr-1" /> Novo Cliente
-                </Button>
-              )}
+              <div className="flex gap-2">
+                {clientesFiltrados.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={handleExportar} disabled={exporting}>
+                    {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Download className="h-4 w-4 mr-1" />}
+                    Exportar
+                  </Button>
+                )}
+                {canSalvar('/empresa/clientes') && (
+                  <Button size="sm" className="bg-[#02572E] text-white hover:bg-[#024a27]" onClick={openNovo}>
+                    <Plus className="h-4 w-4 mr-1" /> Novo Cliente
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Filtros */}
@@ -582,8 +790,18 @@ export default function Clientes() {
                   {UF_LIST.map(uf => <SelectItem key={uf} value={uf}>{uf}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {(filtroNome || filtroCidade || filtroUF) && (
-                <Button variant="ghost" size="sm" className="h-8" onClick={() => { setFiltroNome(''); setFiltroCidade(''); setFiltroUF(''); }}>
+              <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+                <SelectTrigger className="h-8 text-sm w-[120px]">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="ativo">Ativo</SelectItem>
+                  <SelectItem value="inativo">Inativo</SelectItem>
+                </SelectContent>
+              </Select>
+              {(filtroNome || filtroCidade || filtroUF || filtroStatus) && (
+                <Button variant="ghost" size="sm" className="h-8" onClick={() => { setFiltroNome(''); setFiltroCidade(''); setFiltroUF(''); setFiltroStatus(''); }}>
                   <X className="h-4 w-4 mr-1" /> Limpar
                 </Button>
               )}
@@ -631,25 +849,6 @@ export default function Clientes() {
                                 <Pencil className="w-3.5 h-3.5" />
                               </Button>
                             )}
-                            {canExcluir('/empresa/clientes') && (
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-200 text-red-700 p-0" title="Excluir">
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Excluir cliente?</AlertDialogTitle>
-                                    <AlertDialogDescription>Tem certeza que deseja excluir "{c.nome}"? Esta ação não pode ser desfeita.</AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => handleDelete(c.id)}>Excluir</AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -672,9 +871,33 @@ export default function Clientes() {
               <h1 className="text-xl font-bold text-[#1A1A1A] flex-1">
                 {formMode === 'novo' ? 'Novo Cliente' : formMode === 'editar' ? 'Editar Cliente' : 'Visualizar Cliente'}
               </h1>
+              {editingId && (
+                <Button variant="outline" onClick={handleExportarCliente} title="Exportar dados do cliente">
+                  <Download className="h-4 w-4 mr-1" /> Exportar
+                </Button>
+              )}
               {formMode !== 'visualizar' && (
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setView('lista')}>Cancelar</Button>
+                  {editingId && canExcluir('/empresa/clientes') && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700">
+                          <Trash2 className="h-4 w-4 mr-1" /> Excluir
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Excluir cliente?</AlertDialogTitle>
+                          <AlertDialogDescription>Tem certeza que deseja excluir "{form.nome}"? Esta ação não pode ser desfeita.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => { handleDelete(editingId!); setView('lista'); }}>Excluir</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
                   <Button className="bg-[#02572E] text-white hover:bg-[#024a27]" onClick={handleSave} disabled={saving}>
                     {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
                     {editingId ? 'Salvar Alterações' : 'Cadastrar Cliente'}
@@ -966,7 +1189,7 @@ export default function Clientes() {
                   {/* Atividades - Árvore */}
                   <div className="flex-1 min-h-0 flex flex-col">
                     <p className="text-sm font-semibold text-[#1A1A1A] mb-2">Atividades - ({selectedRamos.size})</p>
-                    <div ref={atividadesScrollRef} className="flex-1 overflow-auto border rounded-lg p-2 min-h-0" tabIndex={0} style={{ outline: 'none' }}>
+                    <div ref={atividadesScrollRef} className="flex-1 overflow-auto border rounded-lg p-2 min-h-0" tabIndex={0} style={{ outline: 'none' }} onKeyDown={handleAtividadesKeyDown}>
                       {ramos.length === 0 ? (
                         <Loader2 className="h-5 w-5 animate-spin text-primary m-4" />
                       ) : (
