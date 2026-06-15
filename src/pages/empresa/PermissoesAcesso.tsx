@@ -45,7 +45,7 @@ const MENUS_FALLBACK: Menu[] = [
   { id: 'lic-tipos', nome: '...Licitação - Tipos de Licitação', path: '/licitacoes/tipos', ordem: 3, parent_id: 'ativa' },
   { id: 'lic-marc', nome: '...Licitação - Marcação Pendente', path: '/licitacoes/marcacoes-pendentes', ordem: 4, parent_id: 'ativa' },
   { id: 'org-cad', nome: '...Órgãos - Cadastro', path: '/orgaos/cadastro', ordem: 5, parent_id: 'ativa' },
-  { id: 'org-cons', nome: '...Órgãos - Consulta', path: '/orgaos/sem-ibge', ordem: 6, parent_id: 'ativa' },
+  { id: 'org-cons', nome: '...Órgãos - Consulta', path: '/orgaos/consulta', ordem: 6, parent_id: 'ativa' },
   { id: 'org-agr', nome: '...Órgãos - Agrupamentos', path: '/orgaos/agrupamentos', ordem: 7, parent_id: 'ativa' },
   { id: 'emp-sites', nome: '...Empresa - Sites', path: '/empresa/sites', ordem: 8, parent_id: 'ativa' },
   { id: 'emp-ativ', nome: '...Empresa - Atividades', path: '/empresa/atividades', ordem: 9, parent_id: 'ativa' },

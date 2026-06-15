@@ -44,7 +44,7 @@ const App = () => (
               <Route path="/licitacoes/marcacoes-pendentes" element={<ProtectedRoute path="/licitacoes/marcacoes-pendentes"><MarcacoesPendentes /></ProtectedRoute>} />
               <Route path="/licitacoes/relatorio-produtividade" element={<ProtectedRoute path="/licitacoes/relatorio-produtividade"><RelatorioProdutividade /></ProtectedRoute>} />
               <Route path="/orgaos/cadastro" element={<ProtectedRoute path="/orgaos/cadastro"><OrgaoCadastro /></ProtectedRoute>} />
-              <Route path="/orgaos/sem-ibge" element={<ProtectedRoute path="/orgaos/sem-ibge"><OrgaosSemIBGE /></ProtectedRoute>} />
+              <Route path="/orgaos/consulta" element={<ProtectedRoute path="/orgaos/consulta"><OrgaosSemIBGE /></ProtectedRoute>} />
               <Route path="/orgaos/agrupamentos" element={<ProtectedRoute path="/orgaos/agrupamentos"><OrgaosAgrupamentos /></ProtectedRoute>} />
               <Route path="/empresa/sites" element={<ProtectedRoute path="/empresa/sites"><Sites /></ProtectedRoute>} />
               <Route path="/empresa/atividades" element={<ProtectedRoute path="/empresa/atividades"><Atividades /></ProtectedRoute>} />

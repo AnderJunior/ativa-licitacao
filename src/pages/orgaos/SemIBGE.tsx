@@ -3,15 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { Loader2, Eye, Trash2, Pencil } from 'lucide-react';
-import { usePermissoes } from '@/contexts/PermissoesContext';
+import { Loader2, Eye, Pencil } from 'lucide-react';
 
 interface Orgao {
   id: string;
@@ -35,7 +33,6 @@ interface OrgaoCompleto extends Orgao {
 
 export default function OrgaosSemIBGE() {
   const navigate = useNavigate();
-  const { canSalvar, canExcluir } = usePermissoes();
   const [loading, setLoading] = useState(true);
   const [orgaos, setOrgaos] = useState<Orgao[]>([]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
@@ -49,27 +46,32 @@ export default function OrgaosSemIBGE() {
   const loadOrgaos = async () => {
     setLoading(true);
     try {
-      const data = await api.get<Orgao[]>('/api/orgaos/sem-ibge');
+      const data = await api.get<Orgao[]>('/api/orgaos');
 
-      // Buscar nomes das cidades para os que têm código IBGE
-      const orgaosComCidade = await Promise.all(
-        (data || []).map(async (orgao) => {
-          if (orgao.cidade_ibge && orgao.uf) {
-            try {
-              const response = await fetch(
-                `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${orgao.cidade_ibge}`
-              );
-              if (response.ok) {
-                const municipio = await response.json();
-                return { ...orgao, cidade_nome: municipio?.nome || null };
-              }
-            } catch (error) {
-              console.error('Erro ao buscar nome da cidade:', error);
+      // Buscar nomes das cidades (com cache para evitar requests duplicados)
+      const cidadeCache = new Map<string, string>();
+      const codigosUnicos = [...new Set((data || []).filter(o => o.cidade_ibge).map(o => o.cidade_ibge!))];
+
+      await Promise.all(
+        codigosUnicos.map(async (codigo) => {
+          try {
+            const response = await fetch(
+              `https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${codigo}`
+            );
+            if (response.ok) {
+              const municipio = await response.json();
+              if (municipio?.nome) cidadeCache.set(codigo, municipio.nome);
             }
+          } catch (error) {
+            console.error('Erro ao buscar nome da cidade:', error);
           }
-          return { ...orgao, cidade_nome: null };
         })
       );
+
+      const orgaosComCidade = (data || []).map(orgao => ({
+        ...orgao,
+        cidade_nome: orgao.cidade_ibge ? cidadeCache.get(orgao.cidade_ibge) || null : null,
+      }));
 
       setOrgaos(orgaosComCidade);
     } catch {
@@ -78,15 +80,6 @@ export default function OrgaosSemIBGE() {
     setLoading(false);
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await api.delete('/api/orgaos/' + id);
-      toast.success('Órgão excluído!');
-      loadOrgaos();
-    } catch (error: any) {
-      toast.error('Erro ao excluir: ' + error.message);
-    }
-  };
 
   const handleView = async (id: string) => {
     setLoadingView(true);
@@ -149,7 +142,7 @@ export default function OrgaosSemIBGE() {
       <div className="bg-white rounded-lg border border-border p-6 h-full flex flex-col">
         <div className="flex items-center gap-3 mb-2">
           <h1 className="text-xl font-bold text-[#262626]">
-            Órgãos sem IBGE
+            Consulta de Órgãos
             {!loading && orgaos.length > 0 && (
               <span className="text-red-600 ml-2 text-sm">({orgaos.length})</span>
             )}
@@ -208,34 +201,6 @@ export default function OrgaosSemIBGE() {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
-                          {canExcluir('/orgaos/sem-ibge') && (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 rounded-full bg-red-100 hover:bg-red-600 text-red-700 hover:text-white p-0"
-                                title="Excluir"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Excluir órgão?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Tem certeza que deseja excluir "{orgao.nome_orgao}"? Esta ação não pode ser desfeita.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => handleDelete(orgao.id)}>
-                                  Excluir
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                          )}
                         </div>
                       </td>
                     </tr>

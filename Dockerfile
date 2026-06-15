@@ -18,8 +18,8 @@ COPY server/package.json server/package-lock.json* ./
 RUN npm ci
 
 COPY server/ .
-RUN npx prisma generate
-RUN npx tsc
+RUN node node_modules/prisma/build/index.js generate
+RUN node node_modules/typescript/bin/tsc
 
 # ===== RUNTIME =====
 FROM node:20-alpine

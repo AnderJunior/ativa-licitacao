@@ -153,7 +153,7 @@ export default function Sites() {
       setDialogOpen(false);
       loadSites();
     } catch (err: any) {
-      toast.error(err.message?.includes('Unique') ? 'Este domínio já existe' : ('Erro ao adicionar: ' + err.message));
+      toast.error(err.message || 'Erro ao adicionar site');
     }
     setSaving(false);
   };
@@ -200,7 +200,7 @@ export default function Sites() {
       closeEditDialog();
       loadSites();
     } catch (err: any) {
-      toast.error(err.message?.includes('Unique') ? 'Este domínio já existe' : ('Erro ao atualizar: ' + err.message));
+      toast.error(err.message || 'Erro ao atualizar site');
     }
     setSavingEdit(false);
   };

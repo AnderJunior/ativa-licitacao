@@ -117,10 +117,20 @@ async function fetchPncpPage(
   }
 }
 
+/** Busca o proximo num_ativa disponivel */
+async function getNextNumAtiva(prisma: PrismaClient): Promise<number> {
+  const result = await prisma.$queryRaw<{ next_num: number }[]>`
+    SELECT COALESCE(MAX(CAST(num_ativa AS INTEGER)), 0) + 1 as next_num
+    FROM contratacoes
+    WHERE num_ativa IS NOT NULL AND num_ativa ~ '^[0-9]+$'
+  `;
+  return Number(result[0]?.next_num || 1);
+}
+
 /**
  * Processa uma pagina de resultados PNCP:
  * - Verifica quais ja existem no banco
- * - Insere os novos
+ * - Insere os novos (sem num_ativa — só recebe quando for cadastrada)
  */
 async function processPage(
   prisma: PrismaClient,
@@ -180,8 +190,8 @@ async function processPage(
             : (item.orgaoEntidade?.poderId || null),
           valor_estimado: item.valorTotalEstimado || null,
           link_processo: `https://pncp.gov.br/app/editais/${item.orgaoEntidade?.cnpj}/${item.anoCompra}/${item.sequencialCompra}`,
-          ano_compra: item.anoCompra || null,
-          sequencial_compra: item.sequencialCompra || null,
+          ano_compra: item.anoCompra != null ? String(item.anoCompra) : null,
+          sequencial_compra: item.sequencialCompra != null ? String(item.sequencialCompra) : null,
           dt_encerramento_proposta: item.dataEncerramentoProposta || null,
           tipo_cadastro: 'pncp',
         },
@@ -220,6 +230,8 @@ export async function syncPncp(prisma: PrismaClient): Promise<SyncResult> {
     console.log(`[PNCP Sync] Iniciando sync — dataFinal=${dataFinal}`);
     console.log(`[PNCP Sync] Modalidades: ${MODALIDADES.join(', ')}`);
     console.log(`[PNCP Sync] ======================================\n`);
+
+    // num_ativa nao e mais atribuido na importacao — so quando a licitacao e cadastrada
 
     for (const modalidade of MODALIDADES) {
       // 1) Buscar pagina 1 para saber total de paginas
@@ -296,6 +308,47 @@ export async function syncPncp(prisma: PrismaClient): Promise<SyncResult> {
   } finally {
     isSyncing = false;
   }
+}
+
+// ── Backfill: preenche num_ativa em registros existentes ──
+
+export async function backfillNumAtiva(prisma: PrismaClient): Promise<number> {
+  // Busca registros sem num_ativa, ordenados por created_at
+  const semNumAtiva = await prisma.contratacoes.findMany({
+    where: {
+      OR: [
+        { num_ativa: null },
+        { num_ativa: '' },
+      ],
+    },
+    select: { id: true },
+    orderBy: { created_at: 'asc' },
+  });
+
+  if (semNumAtiva.length === 0) {
+    console.log('[Backfill] Todos os registros ja possuem num_ativa');
+    return 0;
+  }
+
+  console.log(`[Backfill] ${semNumAtiva.length} registros sem num_ativa, preenchendo...`);
+
+  let nextNum = await getNextNumAtiva(prisma);
+
+  // Atualiza em batches de 100
+  for (let i = 0; i < semNumAtiva.length; i++) {
+    await prisma.contratacoes.update({
+      where: { id: semNumAtiva[i].id },
+      data: { num_ativa: String(nextNum) },
+    });
+    nextNum++;
+
+    if ((i + 1) % 1000 === 0) {
+      console.log(`[Backfill] ${i + 1}/${semNumAtiva.length} atualizados...`);
+    }
+  }
+
+  console.log(`[Backfill] Concluido: ${semNumAtiva.length} registros atualizados (num_ativa de ${nextNum - semNumAtiva.length} a ${nextNum - 1})`);
+  return semNumAtiva.length;
 }
 
 // ── Cron (setInterval de 30 min) ──────────────────────────

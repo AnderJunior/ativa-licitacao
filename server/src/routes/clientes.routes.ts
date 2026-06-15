@@ -30,6 +30,15 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
     return reply.send(clientes);
   });
 
+  // GET /api/clientes/export — clientes com emails para exportação
+  fastify.get('/api/clientes/export', { preHandler: [requireAuth] }, async (request, reply) => {
+    const clientes = await fastify.prisma.clientes.findMany({
+      orderBy: { nome: 'asc' },
+      include: { emails: true },
+    });
+    return reply.send(clientes);
+  });
+
   // GET /api/clientes/:id — com todas as relacoes
   fastify.get('/api/clientes/:id', { preHandler: [requireAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };

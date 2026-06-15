@@ -95,9 +95,12 @@ class ApiClient {
    * DELETE request
    */
   async delete(path: string): Promise<void> {
+    const token = this.getToken();
+    const h: HeadersInit = {};
+    if (token) h['Authorization'] = `Bearer ${token}`;
     const response = await fetch(`${API_BASE}${path}`, {
       method: 'DELETE',
-      headers: this.headers(),
+      headers: h,
     });
     await this.handleResponse<void>(response);
   }

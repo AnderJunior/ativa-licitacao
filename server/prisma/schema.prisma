@@ -63,7 +63,7 @@ model contratacoes {
   cadastrado               Boolean?                @default(false)
   cadastrado_por           String?                 @db.Uuid
   enviada                  Boolean?                @default(false)
-  ano_compra               Int?
+  ano_compra               String?
   cnpj                     String?
   complemento              String?
   conteudo                 String?
@@ -89,7 +89,7 @@ model contratacoes {
   orgao_pncp               String?
   poder                    String?
   regiao                   String?
-  sequencial_compra        Int?
+  sequencial_compra        String?
   textos_cadastro_manual   String?
   tipo_cadastro            String?
   titulo                   String?
@@ -97,6 +97,8 @@ model contratacoes {
   un_cod                   String?
   unidade                  String?
   valor_estimado           Float?
+  lida                     Boolean?                @default(false)
+  excluido                 Boolean?                @default(false)
   created_at               DateTime                @default(now()) @db.Timestamptz(6)
   updated_at               DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
   tipo_licitacao           tipo_licitacoes?         @relation(fields: [descricao_modalidade], references: [id])

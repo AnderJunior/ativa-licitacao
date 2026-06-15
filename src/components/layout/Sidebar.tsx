@@ -11,7 +11,6 @@ import {
   Search,
   Info,
   AlertCircle,
-  UserX,
   UsersRound,
   Building,
   Globe,
@@ -54,7 +53,7 @@ const menuItems: MenuItem[] = [
     icon: Users,
     children: [
       { label: 'Cadastro', path: '/orgaos/cadastro', icon: Plus },
-      { label: 'Consulta', path: '/orgaos/sem-ibge', icon: UserX },
+      { label: 'Consulta', path: '/orgaos/consulta', icon: Search },
       { label: 'Agrupamentos', path: '/orgaos/agrupamentos', icon: UsersRound },
     ],
   },

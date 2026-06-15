@@ -11,6 +11,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -92,7 +93,8 @@ export default function LicitacaoCadastro() {
   const { canSalvar, canExcluir } = usePermissoes();
 
   const [loading, setLoading] = useState(false);
-  const [ordemAtual, setOrdemAtual] = useState<number | null>(null);
+  const [numAtivaAtual, setNumAtivaAtual] = useState<number | null>(null);
+  const [skippedIds, setSkippedIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [tipos, setTipos] = useState<TipoLicitacao[]>([]);
   const [orgaos, setOrgaos] = useState<Orgao[]>([]);
@@ -132,6 +134,9 @@ export default function LicitacaoCadastro() {
     dt_encerramento_proposta: string | null;
     dt_atualizacao: string | null;
   } | null>(null);
+  const [licitacoesOrgaoTipoOpen, setLicitacoesOrgaoTipoOpen] = useState(false);
+  const [licitacoesOrgaoTipo, setLicitacoesOrgaoTipo] = useState<any[]>([]);
+  const [licitacoesOrgaoTipoLoading, setLicitacoesOrgaoTipoLoading] = useState(false);
   const [atividadesVaziasDialogOpen, setAtividadesVaziasDialogOpen] = useState(false);
   const [palavrasChavesModalOpen, setPalavrasChavesModalOpen] = useState(false);
   const [palavrasChavesModalItem, setPalavrasChavesModalItem] = useState<RamoAtividade | null>(null);
@@ -166,9 +171,24 @@ export default function LicitacaoCadastro() {
   // Estados para pesquisa por digitação
   const [searchBuffer, setSearchBuffer] = useState('');
   const [highlightedAtividadeId, setHighlightedAtividadeId] = useState<string | null>(null);
+  const highlightedIdRef = useRef<string | null>(null);
+  useEffect(() => { highlightedIdRef.current = highlightedAtividadeId; }, [highlightedAtividadeId]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastKeyTimeRef = useRef<number>(0);
+
+  // Flatten tree para navegação por setas
+  const flattenRamos = useCallback((nodes: RamoAtividade[]): string[] => {
+    const result: string[] = [];
+    const recurse = (items: RamoAtividade[]) => {
+      for (const item of items) {
+        result.push(item.id);
+        if (item.children?.length) recurse(item.children);
+      }
+    };
+    recurse(nodes);
+    return result;
+  }, []);
   const atividadesScrollRef = useRef<HTMLDivElement>(null);
   
   // Hook para redimensionar a área de atividades
@@ -768,9 +788,42 @@ export default function LicitacaoCadastro() {
       // Ignora se estiver digitando em um input ou textarea
       if (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA') return;
       
+      // ── Navegação por setas ──
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        const flatIds = flattenRamos(ramos);
+        if (flatIds.length === 0) return;
+        const curId = highlightedIdRef.current;
+        const currentIdx = curId ? flatIds.indexOf(curId) : -1;
+        let nextIdx: number;
+        if (e.key === 'ArrowDown') {
+          nextIdx = currentIdx < flatIds.length - 1 ? currentIdx + 1 : 0;
+        } else {
+          nextIdx = currentIdx > 0 ? currentIdx - 1 : flatIds.length - 1;
+        }
+        const nextId = flatIds[nextIdx];
+        highlightedIdRef.current = nextId;
+        setHighlightedAtividadeId(nextId);
+        setSearchBuffer('');
+        if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        const elemento = document.querySelector(`[data-atividade-id="${nextId}"]`);
+        if (elemento) elemento.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return;
+      }
+
+      // ── Enter para marcar/desmarcar ──
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const curId = highlightedIdRef.current;
+        if (curId) toggleRamo(curId);
+        return;
+      }
+
       // Ignora teclas especiais (Ctrl, Alt, Shift, etc.)
       if (e.ctrlKey || e.altKey || e.metaKey) return;
-      
+
       // Ignora teclas de navegação e função
       if (e.key.length > 1 && !['Backspace', 'Delete', 'Space'].includes(e.key)) return;
       
@@ -921,7 +974,7 @@ export default function LicitacaoCadastro() {
         clearTimeout(highlightTimeoutRef.current);
       }
     };
-  }, [searchBuffer, ramos, highlightedAtividadeId, palavrasChavesModalOpen]);
+  }, [searchBuffer, ramos, highlightedAtividadeId, palavrasChavesModalOpen, flattenRamos]);
 
   // Remove outline do viewport quando recebe foco
   useEffect(() => {
@@ -1300,7 +1353,7 @@ export default function LicitacaoCadastro() {
         sequencial_compra: naoPreencherNumero ? '' : (sequencialCompra || ''),
         ano_compra: naoPreencherNumero ? '' : (anoCompra || ''),
       });
-      setOrdemAtual(data.ordem ?? null);
+      setNumAtivaAtual(data.num_ativa ? Number(data.num_ativa) : null);
       // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
       setRevisao(data.cadastrado === true && data.enviada === true);
       // Load marcações
@@ -1328,7 +1381,7 @@ export default function LicitacaoCadastro() {
   const handleProximaLicitacaoUF = async () => {
     setExibirPopupOpen(false);
     const ufSelecionada = formData.pncp;
-    
+
     if (!ufSelecionada || ufSelecionada.trim() === '') {
       toast.warning('Por favor, selecione uma UF no campo PNCP antes de buscar a próxima licitação.');
       return;
@@ -1338,19 +1391,31 @@ export default function LicitacaoCadastro() {
     try {
       // Busca a primeira licitação não cadastrada da UF selecionada
       // Ordena por created_at ascendente (mais antiga primeiro)
-      const results = await api.get<{ id: string }[]>('/api/contratacoes', {
+      // Exclui IDs já vistos/pulados nesta sessão
+      const params: Record<string, string> = {
         uf: ufSelecionada,
         cadastrado: 'false',
         sort: 'created_at',
         order: 'asc',
         limit: '1',
         select: 'id',
-      });
+      };
+
+      // Inclui o ID atualmente carregado nos excluídos também
+      const allExcluded = [...skippedIds];
+      if (contratacaoId && !allExcluded.includes(contratacaoId)) {
+        allExcluded.push(contratacaoId);
+      }
+      if (allExcluded.length > 0) {
+        params.exclude_ids = allExcluded.join(',');
+      }
+
+      const results = await api.get<{ id: string }[]>('/api/contratacoes', params);
 
       const data = results?.[0] || null;
 
       if (!data || !data.id) {
-        toast.info(`Todas as licitações do estado ${ufSelecionada} já foram cadastradas.`);
+        toast.info(`Todas as licitações do estado ${ufSelecionada} já foram cadastradas (ou puladas).`);
         setLoading(false);
         return;
       }
@@ -1359,7 +1424,7 @@ export default function LicitacaoCadastro() {
       // Adiciona parâmetro para indicar que não deve preencher o número automaticamente
       navigate(`/licitacoes/cadastro?id=${data.id}&naoPreencherNumero=true`);
       // O useEffect vai detectar a mudança no contratacaoId e carregar a licitação automaticamente
-      
+
     } catch (error) {
       console.error('Erro ao buscar próxima licitação:', error);
       toast.error('Erro ao buscar próxima licitação. Tente novamente.');
@@ -1456,10 +1521,10 @@ export default function LicitacaoCadastro() {
       sequencial_compra: sequencialCompra || '',
       ano_compra: anoCompra || '',
     }));
-    setOrdemAtual(licitacao.ordem ?? null);
+    setNumAtivaAtual(licitacao.num_ativa ? Number(licitacao.num_ativa) : null);
     // Revisão: marcado apenas quando cadastrada E já enviada em relatório ao cliente
     setRevisao(licitacao.cadastrado === true && licitacao.enviada === true);
-    
+
     // Marca os ramos de atividade
     setSelectedRamos(ramos);
   };
@@ -1576,31 +1641,8 @@ export default function LicitacaoCadastro() {
         dtVinculoAtiva = dataAtual;
       }
 
-      // Calcula num_ativa para licitações que estão sendo cadastradas (cadastrado = true)
-      // Gera num_ativa tanto para cadastros manuais quanto PNCP, desde que ainda não tenha um
-      // num_ativa = quantidade total de licitações cadastradas no sistema + 1
-      let numAtivaParaSalvar: string | null = null;
-      const jaTemNumAtiva = contratacaoId
-        ? await (async () => {
-            try {
-              const orig = await api.get<any>('/api/contratacoes/' + contratacaoId);
-              return !!orig?.num_ativa;
-            } catch { return false; }
-          })()
-        : false;
-
-      if (!jaTemNumAtiva) {
-        // Gera num_ativa para qualquer licitação sendo cadastrada pela primeira vez
-        try {
-          const countResult = await api.get<{ count: number }>('/api/contratacoes', { count_only: 'true', cadastrado: 'true' });
-          // num_ativa = total de cadastrados + 1
-          const totalCadastrados = countResult?.count || 0;
-          numAtivaParaSalvar = String(totalCadastrados + 1);
-        } catch (countError) {
-          console.error('Erro ao contar licitações:', countError);
-          // Em caso de erro, não impede o salvamento, apenas não define num_ativa
-        }
-      }
+      // num_ativa é gerado automaticamente pelo servidor (tanto para PNCP quanto Manual)
+      // Não é necessário calcular no frontend
 
       // Cria objeto limpo com apenas os campos que devem ser salvos na tabela
       // modalidade e modalidade_ativa não são atualizados ao salvar (mantém valores originais)
@@ -1636,11 +1678,8 @@ export default function LicitacaoCadastro() {
         dataToSave.updated_at = dataAtual;
       }
 
-      // Adiciona num_ativa para qualquer licitação sendo cadastrada pela primeira vez
-      // (tanto Manual quanto PNCP — o INSERT usa direto, o UPDATE trata acima)
-      if (numAtivaParaSalvar !== null && !contratacaoId) {
-        dataToSave.num_ativa = numAtivaParaSalvar;
-      }
+      // num_ativa não é enviado no save — o servidor gera automaticamente no POST
+      // e para UPDATE, mantém o valor que já existe no banco
 
       // Nunca mexer em num_licitacao - remove do objeto de save se existir
       delete dataToSave.num_licitacao;
@@ -1682,12 +1721,8 @@ export default function LicitacaoCadastro() {
       // Se tem ID (da URL ou do formData), faz UPDATE
       // Se não tem ID, faz INSERT (nova licitação)
       if (licitacaoId) {
-        // Em UPDATE, só altera num_ativa se estiver sendo gerado agora (primeira vez cadastrando)
-        if (numAtivaParaSalvar !== null) {
-          dataToSave.num_ativa = numAtivaParaSalvar;
-        } else {
-          delete dataToSave.num_ativa;
-        }
+        // UPDATE: não envia num_ativa (mantém o que já existe no banco)
+        delete dataToSave.num_ativa;
 
         // Garante que updated_at seja sempre atualizado quando cadastrado = true
         if (dataToSave.cadastrado === true) {
@@ -1697,16 +1732,17 @@ export default function LicitacaoCadastro() {
         await api.patch('/api/contratacoes/' + licitacaoId, dataToSave);
         contratacaoIdToUse = licitacaoId;
 
-        // Atualiza o num_ativa formatado no formData se foi gerado agora
-        if (numAtivaParaSalvar !== null) {
-          const now = new Date();
-          const numAtivaFormatado = `${numAtivaParaSalvar}.${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getFullYear()).slice(-2)}`;
-          setFormData(prev => ({
-            ...prev,
-            num_ativa: numAtivaFormatado,
-          }));
-        }
+        // Recarrega o registro para atualizar o num_ativa exibido
+        try {
+          const updated = await api.get<any>('/api/contratacoes/' + licitacaoId);
+          if (updated?.num_ativa) {
+            const createdAt = new Date(updated.created_at);
+            const numAtivaFormatado = `${updated.num_ativa}.${String(createdAt.getMonth() + 1).padStart(2, '0')}/${String(createdAt.getFullYear()).slice(-2)}`;
+            setFormData(prev => ({ ...prev, num_ativa: numAtivaFormatado }));
+          }
+        } catch { /* ignore */ }
       } else {
+        // INSERT: servidor gera num_ativa automaticamente
         // Garante que updated_at seja sempre atualizado quando cadastrado = true
         if (dataToSave.cadastrado === true) {
           dataToSave.updated_at = dataAtual;
@@ -1714,17 +1750,15 @@ export default function LicitacaoCadastro() {
 
         const data = await api.post<any>('/api/contratacoes', dataToSave);
         contratacaoIdToUse = data.id;
-        setOrdemAtual(data.ordem ?? null);
+        setNumAtivaAtual(data.num_ativa ? Number(data.num_ativa) : null);
 
-        // Atualiza o num_ativa formatado no formData se foi calculado
-        if (numAtivaParaSalvar !== null) {
-          const numAtivaFormatado = `${numAtivaParaSalvar}.${String(new Date(data.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(data.created_at).getFullYear()).slice(-2)}`;
-          setFormData(prev => ({
-            ...prev,
-            num_ativa: numAtivaFormatado,
-          }));
+        // Atualiza o num_ativa formatado retornado pelo servidor
+        if (data.num_ativa) {
+          const createdAt = new Date(data.created_at);
+          const numAtivaFormatado = `${data.num_ativa}.${String(createdAt.getMonth() + 1).padStart(2, '0')}/${String(createdAt.getFullYear()).slice(-2)}`;
+          setFormData(prev => ({ ...prev, num_ativa: numAtivaFormatado }));
         }
-        
+
         // Atualiza a URL para incluir o ID da licitação criada
         window.history.replaceState({}, '', `/licitacoes/cadastro?id=${data.id}`);
       }
@@ -1773,6 +1807,10 @@ export default function LicitacaoCadastro() {
       }
 
       toast.success('Licitação salva com sucesso!');
+      // Remove dos skippedIds pois agora está cadastrado e não retornará mais
+      if (contratacaoId) {
+        setSkippedIds(prev => prev.filter(id => id !== contratacaoId));
+      }
     } catch (error: any) {
       toast.error('Erro ao salvar: ' + error.message);
     } finally {
@@ -1864,6 +1902,11 @@ export default function LicitacaoCadastro() {
   };
 
   const handleLimpar = () => {
+    // Registra o ID atual como "já visto" para que → puxe a próxima
+    if (contratacaoId) {
+      setSkippedIds(prev => prev.includes(contratacaoId) ? prev : [...prev, contratacaoId]);
+    }
+
     // Limpa todos os campos do formulário (mantém PNCP/UF selecionado)
     setFormData({
       num_ativa: '',
@@ -1881,12 +1924,12 @@ export default function LicitacaoCadastro() {
       sequencial_compra: '',
       ano_compra: null,
     });
-    
+
     // Limpa checkboxes selecionados (ramos de atividade)
     setSelectedRamos([]);
     setRevisao(false);
-    setOrdemAtual(null);
-    
+    setNumAtivaAtual(null);
+
     // Fecha popovers se estiverem abertos
     setTipoPopupOpen(false);
     setOrgaoPopupOpen(false);
@@ -1894,12 +1937,12 @@ export default function LicitacaoCadastro() {
     setBuscarPopupOpen(false);
     setPncpPopupOpen(false);
     setExibirPopupOpen(false);
-    
+
     // Remove o ID da URL se existir para permitir puxar nova licitação
     if (contratacaoId) {
       setSearchParams({});
     }
-    
+
     toast.success('Todos os campos foram limpos!');
   };
 
@@ -1907,32 +1950,18 @@ export default function LicitacaoCadastro() {
     setExibirPopupOpen(false);
     setLoading(true);
     try {
-      const params: Record<string, string> = {
-        hide_excluido: 'true',
-        select: 'id,ordem',
-        limit: '1',
-      };
+      const params: Record<string, string> = numAtivaAtual
+        ? { direction: 'prev', current: String(numAtivaAtual) }
+        : { direction: 'first' };
 
-      if (ordemAtual) {
-        // Tem registro aberto: busca o anterior (ordem menor mais próxima)
-        params.ordem_lt = String(ordemAtual);
-        params.sort = 'ordem';
-        params.order = 'desc';
-      } else {
-        // Sem registro aberto: busca o primeiro (menor ordem)
-        params.sort = 'ordem';
-        params.order = 'asc';
-      }
+      const result = await api.get<{ data: { id: string; num_ativa: string; created_at: string } | null }>('/api/contratacoes/navigate', params);
 
-      const results = await api.get<{ id: string; ordem: number }[]>('/api/contratacoes', params);
-      const data = results?.[0] || null;
-
-      if (!data) {
-        toast.info(ordemAtual ? 'Não há licitação anterior.' : 'Nenhuma licitação encontrada.');
+      if (!result?.data) {
+        toast.info(numAtivaAtual ? 'Não há licitação anterior.' : 'Nenhuma licitação encontrada.');
         return;
       }
 
-      navigate(`/licitacoes/cadastro?id=${data.id}`);
+      navigate(`/licitacoes/cadastro?id=${result.data.id}`);
     } catch (error) {
       console.error('Erro ao buscar licitação anterior:', error);
       toast.error('Erro ao buscar licitação anterior. Tente novamente.');
@@ -1945,32 +1974,18 @@ export default function LicitacaoCadastro() {
     setExibirPopupOpen(false);
     setLoading(true);
     try {
-      const params: Record<string, string> = {
-        hide_excluido: 'true',
-        select: 'id,ordem',
-        limit: '1',
-      };
+      const params: Record<string, string> = numAtivaAtual
+        ? { direction: 'next', current: String(numAtivaAtual) }
+        : { direction: 'last' };
 
-      if (ordemAtual) {
-        // Tem registro aberto: busca o próximo (ordem maior mais próxima)
-        params.ordem_gt = String(ordemAtual);
-        params.sort = 'ordem';
-        params.order = 'asc';
-      } else {
-        // Sem registro aberto: busca o último (maior ordem)
-        params.sort = 'ordem';
-        params.order = 'desc';
-      }
+      const result = await api.get<{ data: { id: string; num_ativa: string; created_at: string } | null }>('/api/contratacoes/navigate', params);
 
-      const results = await api.get<{ id: string; ordem: number }[]>('/api/contratacoes', params);
-      const data = results?.[0] || null;
-
-      if (!data) {
-        toast.info(ordemAtual ? 'Não há próxima licitação.' : 'Nenhuma licitação encontrada.');
+      if (!result?.data) {
+        toast.info(numAtivaAtual ? 'Não há próxima licitação.' : 'Nenhuma licitação encontrada.');
         return;
       }
 
-      navigate(`/licitacoes/cadastro?id=${data.id}`);
+      navigate(`/licitacoes/cadastro?id=${result.data.id}`);
     } catch (error) {
       console.error('Erro ao buscar próxima licitação:', error);
       toast.error('Erro ao buscar próxima licitação. Tente novamente.');
@@ -2000,7 +2015,7 @@ export default function LicitacaoCadastro() {
     
     // Limpa checkboxes selecionados (ramos de atividade)
     setSelectedRamos([]);
-    setOrdemAtual(null);
+    setNumAtivaAtual(null);
     
     // Fecha popovers se estiverem abertos
     setTipoPopupOpen(false);
@@ -2260,49 +2275,41 @@ export default function LicitacaoCadastro() {
     return null;
   };
 
+  // Foca o viewport interno do ScrollArea para capturar teclas
+  const focusAtividadesViewport = () => {
+    const viewport = atividadesScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+    if (viewport) {
+      viewport.focus();
+      viewport.style.outline = 'none';
+    }
+  };
+
   // Rola até o elemento encontrado e destaca
   const scrollParaAtividade = (atividadeId: string) => {
     const elemento = document.querySelector(`[data-atividade-id="${atividadeId}"]`);
     if (elemento && atividadesScrollRef.current) {
       elemento.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      
-      // Limpa timeout anterior de destaque
-      if (highlightTimeoutRef.current) {
-        clearTimeout(highlightTimeoutRef.current);
-      }
-      
-      // Define a atividade como destacada
+
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+
+      highlightedIdRef.current = atividadeId;
       setHighlightedAtividadeId(atividadeId);
-      
-      // Remove o destaque após 2 segundos
-      highlightTimeoutRef.current = setTimeout(() => {
-        setHighlightedAtividadeId(null);
-      }, 2000);
-      
-      // Reseta o buffer após 500ms para permitir nova pesquisa
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
+      focusAtividadesViewport();
+
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = setTimeout(() => {
         setSearchBuffer('');
-        lastKeyTimeRef.current = 0; // Reseta o timestamp para forçar nova pesquisa
+        lastKeyTimeRef.current = 0;
       }, 500);
     }
   };
 
   const handleItemClick = (atividadeId: string) => {
-    // Limpa timeout anterior de destaque
-    if (highlightTimeoutRef.current) {
-      clearTimeout(highlightTimeoutRef.current);
-    }
-    
-    // Define a atividade como destacada
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+
+    highlightedIdRef.current = atividadeId;
     setHighlightedAtividadeId(atividadeId);
-    
-    // Remove o destaque após 2 segundos (opcional - pode remover se quiser que fique marcado até clicar em outro)
-    highlightTimeoutRef.current = setTimeout(() => {
-      setHighlightedAtividadeId(null);
-    }, 2000);
+    focusAtividadesViewport();
   };
 
   const renderRamoTree = (items: RamoAtividade[], level = 0) => {
@@ -2463,11 +2470,36 @@ export default function LicitacaoCadastro() {
               >
                 <X className="w-4 h-4" />
               </Button>
-              <Button 
-                variant="secondary" 
-                size="icon" 
+              <Button
+                variant="secondary"
+                size="icon"
                 className="rounded-full w-9 h-9"
-                onClick={() => setBuscarPopupOpen(true)}
+                onClick={async () => {
+                  // Se Tipo e Orgão estão preenchidos, abre lista de licitações cadastradas
+                  if (formData.modalidade && formData.orgao_pncp) {
+                    setLicitacoesOrgaoTipoOpen(true);
+                    setLicitacoesOrgaoTipoLoading(true);
+                    try {
+                      const tipoObj = tipos.find(t => t.id === formData.modalidade);
+                      const params: Record<string, string> = {
+                        cadastrado: 'true',
+                        orgao_pncp: formData.orgao_pncp,
+                        sort: 'num_ativa',
+                        order: 'desc',
+                        include_tipo: 'true',
+                      };
+                      if (tipoObj) params.descricao_modalidade = tipoObj.id;
+                      const results = await api.get<any[]>('/api/contratacoes', params);
+                      setLicitacoesOrgaoTipo(results || []);
+                    } catch {
+                      setLicitacoesOrgaoTipo([]);
+                    } finally {
+                      setLicitacoesOrgaoTipoLoading(false);
+                    }
+                  } else {
+                    setBuscarPopupOpen(true);
+                  }
+                }}
               >
                 <Search className="w-4 h-4" />
               </Button>
@@ -2611,6 +2643,7 @@ export default function LicitacaoCadastro() {
                             if (ufToSelect && UFS.includes(ufToSelect)) {
                               // Atualiza o estado primeiro
                               setFormData({ ...formData, pncp: ufToSelect });
+                              setSkippedIds([]); // Limpa IDs pulados ao trocar de UF
                               setPncpSearchTerm('');
                               
                               // Fecha o popover imediatamente
@@ -2670,6 +2703,7 @@ export default function LicitacaoCadastro() {
                                 setFormData({ ...formData, pncp: uf });
                                 setPncpPopupOpen(false);
                                 setPncpSearchTerm('');
+                                setSkippedIds([]); // Limpa IDs pulados ao trocar de UF
                                 // Não avança automaticamente quando selecionado por clique - deixa o usuário decidir
                               };
                               
@@ -3396,6 +3430,88 @@ export default function LicitacaoCadastro() {
         onOpenChange={setBuscarPopupOpen}
         onLicitacaoEncontrada={handleLicitacaoEncontrada}
       />
+
+      {/* Popup de Licitações cadastradas do Orgão + Tipo */}
+      <Dialog open={licitacoesOrgaoTipoOpen} onOpenChange={setLicitacoesOrgaoTipoOpen}>
+        <DialogContent className="max-w-[800px] max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-lg">
+              Licitações Cadastradas
+              <span className="text-sm font-normal text-muted-foreground ml-2">
+                {tipos.find(t => t.id === formData.modalidade)?.sigla} — {formData.orgao_pncp}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto">
+            {licitacoesOrgaoTipoLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : licitacoesOrgaoTipo.length === 0 ? (
+              <p className="text-center text-muted-foreground py-12">Nenhuma licitação cadastrada encontrada para este orgão e tipo.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-muted sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">N. Controle</th>
+                    <th className="px-3 py-2 text-left font-medium">Tipo</th>
+                    <th className="px-3 py-2 text-left font-medium">Número</th>
+                    <th className="px-3 py-2 text-left font-medium">Processo</th>
+                    <th className="px-3 py-2 text-left font-medium">Data Licitação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {licitacoesOrgaoTipo.map((lic) => {
+                    const numControle = lic.num_ativa
+                      ? `${lic.num_ativa}.${String(new Date(lic.created_at).getMonth() + 1).padStart(2, '0')}/${String(new Date(lic.created_at).getFullYear()).slice(-2)}`
+                      : '-';
+                    const tipoSigla = lic.tipo_licitacao?.sigla || lic.modalidade || '-';
+                    const numero = (() => {
+                      const titulo = (lic.titulo || '').replace(/edital\s+n[ºo°]?\s*/i, '').trim();
+                      const ano = lic.ano_compra;
+                      return titulo && ano ? `${titulo}/${ano}` : titulo || lic.num_licitacao || '-';
+                    })();
+                    const dtLic = lic.dt_encerramento_proposta
+                      ? new Date(lic.dt_encerramento_proposta).toLocaleDateString('pt-BR')
+                      : '-';
+                    return (
+                      <tr
+                        key={lic.id}
+                        className="border-b hover:bg-muted/50 cursor-pointer"
+                        onClick={() => {
+                          navigate(`/licitacoes/cadastro?id=${lic.id}`);
+                          setLicitacoesOrgaoTipoOpen(false);
+                        }}
+                      >
+                        <td className="px-3 py-1.5">{numControle}</td>
+                        <td className="px-3 py-1.5">{tipoSigla}</td>
+                        <td className="px-3 py-1.5">{numero}</td>
+                        <td className="px-3 py-1.5 max-w-[200px] truncate">
+                          {lic.link_processo ? (
+                            <a
+                              href={lic.link_processo}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {lic.link_processo}
+                            </a>
+                          ) : '-'}
+                        </td>
+                        <td className="px-3 py-1.5">{dtLic}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground pt-2 border-t">
+            {licitacoesOrgaoTipo.length} licitação(ões) cadastrada(s)
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Popup de Buscar Órgão */}
       <BuscarOrgaoPopup

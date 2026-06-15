@@ -8,7 +8,6 @@ const routeNames: Record<string, string> = {
   'tipos': 'Tipos',
   'marcacoes-pendentes': 'Marcações Pendentes',
   'orgaos': 'Órgãos',
-  'sem-ibge': 'Consulta',
   'agrupamentos': 'Agrupamentos',
   'empresa': 'Empresa',
   'sites': 'Sites',

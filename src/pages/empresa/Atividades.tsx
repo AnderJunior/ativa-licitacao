@@ -93,9 +93,18 @@ export default function Atividades() {
   useLayoutEffect(() => {
     if (!adicionarParent && !adicionarComoPai) return;
     const focusInput = () => adicionarInputRef.current?.focus();
+    // Foca imediatamente
     focusInput();
-    const id = requestAnimationFrame(() => focusInput());
-    return () => cancelAnimationFrame(id);
+    // requestAnimationFrame para cobrir o primeiro render
+    const rafId = requestAnimationFrame(() => focusInput());
+    // setTimeout para cobrir o ContextMenu que restaura foco asincronamente ao fechar
+    const t1 = setTimeout(() => focusInput(), 50);
+    const t2 = setTimeout(() => focusInput(), 150);
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [adicionarParent, adicionarComoPai]);
 
   const loadRamos = async () => {

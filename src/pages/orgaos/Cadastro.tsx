@@ -9,7 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft } from 'lucide-react';
+import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft, Trash2 } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
 import { cn } from '@/lib/utils';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -157,6 +158,17 @@ export default function OrgaoCadastro() {
       // silently fail
     }
     setLoading(false);
+  };
+
+  const handleDelete = async () => {
+    if (!orgaoId) return;
+    try {
+      await api.delete('/api/orgaos/' + orgaoId);
+      toast.success('Órgão excluído!');
+      navigate('/orgaos/consulta');
+    } catch (err: any) {
+      toast.error('Erro ao excluir: ' + err.message);
+    }
   };
 
   const handleSave = async () => {
@@ -344,7 +356,7 @@ export default function OrgaoCadastro() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => navigate('/orgaos/sem-ibge')}
+                onClick={() => navigate('/orgaos/consulta')}
                 className="h-8 w-8"
                 title="Voltar para lista de órgãos"
               >
@@ -359,15 +371,38 @@ export default function OrgaoCadastro() {
                   : 'Cadastro de Órgãos'}
             </h1>
           </div>
-          {!isViewMode && canSalvar('/orgaos/cadastro') && (
-            <Button
-              onClick={handleSave}
-              disabled={saving || !formData.nome_orgao?.trim() || !formData.cidade_ibge || !formData.uf || !formData.sites || formData.sites.length === 0}
-              className="bg-[#02572E] text-white hover:bg-[#024a27] px-6"
-            >
-              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              Salvar
-            </Button>
+          {!isViewMode && (
+            <div className="flex gap-2">
+              {orgaoId && canExcluir('/orgaos/consulta') && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700">
+                      <Trash2 className="h-4 w-4 mr-1" /> Excluir
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Excluir órgão?</AlertDialogTitle>
+                      <AlertDialogDescription>Tem certeza que deseja excluir "{formData.nome_orgao}"? Esta ação não pode ser desfeita.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDelete}>Excluir</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+              {canSalvar('/orgaos/cadastro') && (
+                <Button
+                  onClick={handleSave}
+                  disabled={saving || !formData.nome_orgao?.trim() || !formData.cidade_ibge || !formData.uf || !formData.sites || formData.sites.length === 0}
+                  className="bg-[#02572E] text-white hover:bg-[#024a27] px-6"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Salvar
+                </Button>
+              )}
+            </div>
           )}
         </div>
 

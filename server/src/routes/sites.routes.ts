@@ -21,6 +21,17 @@ export default async function sitesRoutes(fastify: FastifyInstance) {
     const body = siteSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: 'Dados invalidos' });
 
+    // Verificar duplicidade por dominio + site
+    const existing = await fastify.prisma.sites.findFirst({
+      where: {
+        dominio: body.data.dominio,
+        site: body.data.site,
+      },
+    });
+    if (existing) {
+      return reply.status(409).send({ error: 'Este site já está cadastrado com este domínio' });
+    }
+
     const site = await fastify.prisma.sites.create({ data: body.data });
     return reply.status(201).send(site);
   });
@@ -42,6 +53,18 @@ export default async function sitesRoutes(fastify: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = siteSchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: 'Dados invalidos' });
+
+    // Verificar duplicidade (excluindo o próprio registro)
+    const existing = await fastify.prisma.sites.findFirst({
+      where: {
+        dominio: body.data.dominio,
+        site: body.data.site,
+        id: { not: id },
+      },
+    });
+    if (existing) {
+      return reply.status(409).send({ error: 'Este site já está cadastrado com este domínio' });
+    }
 
     const site = await fastify.prisma.sites.update({
       where: { id },
