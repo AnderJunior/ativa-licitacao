@@ -115,6 +115,18 @@ function limparXML<T>(v: T): T {
   return out as unknown as T;
 }
 
+// Status efetivo do cliente: fica inativo automaticamente quando a data de
+// cortesia/bloqueio passa (hoje > cortesia_bloqueio). Usado na exibição,
+// no filtro de Status e na exportação.
+function isClienteAtivo(c: { cliente_ativo: boolean; cortesia_bloqueio: string | null }): boolean {
+  if (!c.cliente_ativo) return false;
+  if (!c.cortesia_bloqueio) return true;
+  const cortesia = String(c.cortesia_bloqueio).split('T')[0]; // YYYY-MM-DD
+  const d = new Date();
+  const hoje = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return cortesia >= hoje; // ativo até a data de cortesia (inclusive); inativo depois que ela passa
+}
+
 // ─── Component ───────────────────────────────────────────
 export default function Clientes() {
   const { canSalvar, canExcluir } = usePermissoes();
@@ -132,6 +144,8 @@ export default function Clientes() {
   // ─ Formulário ─
   const [view, setView] = useState<'lista' | 'form'>('lista');
   const [formMode, setFormMode] = useState<'novo' | 'editar' | 'visualizar'>('novo');
+  // Carregamento dos dados relacionados (e-mails/perfis/grupos) ao abrir um cliente
+  const [detalhesLoading, setDetalhesLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'dados' | 'emails' | 'licitacoes' | 'grupos'>('dados');
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -262,6 +276,16 @@ export default function Clientes() {
     setFormMode(mode);
     setActiveTab('dados');
 
+    // Limpa os dados relacionados do cliente anterior e abre a visualização
+    // IMEDIATAMENTE (a aba "Dados" já vem preenchida da lista). O restante
+    // (e-mails/perfis/grupos) carrega em segundo plano.
+    setEmails([]);
+    setPerfis([{ nome: 'A', ufs: new Set(), ramos: new Set() }]);
+    setPerfilAtivo(0);
+    setSelectedGrupos(new Set());
+    setDetalhesLoading(true);
+    setView('form');
+
     try {
       const full = await api.get<any>('/api/clientes/' + cliente.id);
 
@@ -283,9 +307,9 @@ export default function Clientes() {
       setSelectedGrupos(new Set((full.grupos_orgaos || []).map((g: any) => g.grupo_id)));
     } catch (err: any) {
       toast.error('Erro ao carregar dados do cliente: ' + err.message);
+    } finally {
+      setDetalhesLoading(false);
     }
-
-    setView('form');
   };
 
   // ─── Save ──────────────────────────────────────────────
@@ -353,8 +377,8 @@ export default function Clientes() {
       if (filtroNome) filtrados = filtrados.filter(c => c.nome.toLowerCase().includes(filtroNome.toLowerCase()));
       if (filtroCidade) filtrados = filtrados.filter(c => (c.cidade || '').toLowerCase().includes(filtroCidade.toLowerCase()));
       if (filtroUF) filtrados = filtrados.filter(c => c.uf === filtroUF);
-      if (filtroStatus === 'ativo') filtrados = filtrados.filter(c => c.cliente_ativo);
-      if (filtroStatus === 'inativo') filtrados = filtrados.filter(c => !c.cliente_ativo);
+      if (filtroStatus === 'ativo') filtrados = filtrados.filter(c => isClienteAtivo(c));
+      if (filtroStatus === 'inativo') filtrados = filtrados.filter(c => !isClienteAtivo(c));
 
       // Monta as linhas: 1 linha por email, se não tem email cria 1 linha sem email
       const rows: { 'Cod. Interno': string; 'Nome/Empresa': string; 'Email': string; 'Caixa': string }[] = [];
@@ -480,8 +504,8 @@ export default function Clientes() {
     if (filtroNome && !c.nome.toLowerCase().includes(filtroNome.toLowerCase())) return false;
     if (filtroCidade && !(c.cidade || '').toLowerCase().includes(filtroCidade.toLowerCase())) return false;
     if (filtroUF && c.uf !== filtroUF) return false;
-    if (filtroStatus === 'ativo' && !c.cliente_ativo) return false;
-    if (filtroStatus === 'inativo' && c.cliente_ativo) return false;
+    if (filtroStatus === 'ativo' && !isClienteAtivo(c)) return false;
+    if (filtroStatus === 'inativo' && isClienteAtivo(c)) return false;
     return true;
   });
 
@@ -835,9 +859,18 @@ export default function Clientes() {
                         <td className="px-3 py-1.5 text-[#1A1A1A]">{c.uf || '-'}</td>
                         <td className="px-3 py-1.5 text-[#1A1A1A]">{c.fone || '-'}</td>
                         <td className="px-3 py-1.5">
-                          <span className={cn("px-2 py-0.5 rounded text-xs font-medium", c.cliente_ativo ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
-                            {c.cliente_ativo ? 'Ativo' : 'Inativo'}
-                          </span>
+                          {(() => {
+                            const ativo = isClienteAtivo(c);
+                            const bloqueadoPorCortesia = c.cliente_ativo && !ativo;
+                            return (
+                              <span
+                                className={cn("px-2 py-0.5 rounded text-xs font-medium", ativo ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}
+                                title={bloqueadoPorCortesia ? 'Inativo — data de cortesia vencida' : undefined}
+                              >
+                                {ativo ? 'Ativo' : 'Inativo'}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 py-1.5 text-right">
                           <div className="flex gap-1 justify-end">
@@ -920,6 +953,11 @@ export default function Clientes() {
                   {{ dados: 'Dados Gerais', emails: 'E-mails', licitacoes: 'Licitações', grupos: 'Grupo de Órgãos' }[tab]}
                 </button>
               ))}
+              {detalhesLoading && (
+                <span className="ml-auto flex items-center gap-1 self-center pr-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> carregando...
+                </span>
+              )}
             </div>
 
             {/* Conteúdo da aba */}

@@ -697,7 +697,7 @@ export default function LicitacaoConsulta() {
           enviada: 'true',
           hide_excluido: 'true',
           include_tipo: 'true',
-          sort: 'dt_envio',
+          sort: 'updated_at',
           order: 'desc',
         };
         const enviadasRaw = await api.get<any[]>('/api/contratacoes', enviadasParams);
@@ -1861,7 +1861,7 @@ export default function LicitacaoConsulta() {
                   </tfoot>
                 </table>
               ) : filtroLayout === 'detalhado' ? (
-                <table className="caption-bottom text-sm table-fixed border-collapse" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
+                <table className="caption-bottom text-sm table-fixed border-collapse [&_td]:!py-0.5 [&_td]:!px-2 [&_td]:!text-[11px] [&_td]:!leading-tight [&_th]:!h-8 [&_th]:!py-0 [&_th]:!px-2" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
                   <colgroup>
                     {colunasAtuais.map(k => <col key={k} style={{ width: getWidth(k), minWidth: getWidth(k) }} />)}
                   </colgroup>
@@ -1904,7 +1904,7 @@ export default function LicitacaoConsulta() {
                   </tbody>
                 </table>
               ) : filtroLayout === 'unidades' ? (
-                <table className="caption-bottom text-sm table-fixed border-collapse" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
+                <table className="caption-bottom text-sm table-fixed border-collapse [&_td]:!py-0.5 [&_td]:!px-2 [&_td]:!text-[11px] [&_td]:!leading-tight [&_th]:!h-8 [&_th]:!py-0 [&_th]:!px-2" style={{ width: tabelaLargura, minWidth: tabelaLargura }}>
                   <colgroup>
                     {colunasAtuais.map(k => <col key={k} style={{ width: getWidth(k), minWidth: getWidth(k) }} />)}
                   </colgroup>

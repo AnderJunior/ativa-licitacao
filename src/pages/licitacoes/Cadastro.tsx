@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Calendar } from '@/components/ui/calendar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DraggableDialog } from '@/components/ui/draggable-dialog';
 import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/contexts/PermissoesContext';
@@ -118,6 +119,8 @@ export default function LicitacaoCadastro() {
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [duplicidadeDialogOpen, setDuplicidadeDialogOpen] = useState(false);
+  // Gatilho para reexecutar a verificação de duplicidade sob demanda (ex.: ao tabular do campo Número)
+  const [dupCheckTrigger, setDupCheckTrigger] = useState(0);
   const [licitacaoDuplicadaInfo, setLicitacaoDuplicadaInfo] = useState<{
     num_ativa: string | null;
     created_at: string | null;
@@ -680,7 +683,7 @@ export default function LicitacaoCadastro() {
     }, 400);
 
     return () => clearTimeout(timerId);
-  }, [formData.modalidade, formData.orgao_pncp, formData.sequencial_compra, formData.ano_compra, formData.id, tipos, orgaos, contratacaoId]);
+  }, [formData.modalidade, formData.orgao_pncp, formData.sequencial_compra, formData.ano_compra, formData.id, tipos, orgaos, contratacaoId, dupCheckTrigger]);
 
   // Detecta quando o texto do textarea corresponde apenas a um nome de órgão e abre o popup automaticamente
   useEffect(() => {
@@ -1658,7 +1661,6 @@ export default function LicitacaoCadastro() {
 
       const dataToSave: any = {
         ...formDataToSave,
-        cd_pn: formData.pncp || null,
         descricao_modalidade: tipoIdParaSalvar, // Campo UUID - recebe o ID do tipo
         orgao_pncp: orgaoParaSalvar, // Usa o orgão validado
         cadastrado: true,
@@ -1683,6 +1685,11 @@ export default function LicitacaoCadastro() {
 
       // Nunca mexer em num_licitacao - remove do objeto de save se existir
       delete dataToSave.num_licitacao;
+
+      // cd_pn é o código PNCP (definido na sincronização e com constraint única).
+      // O formulário não deve gravá-lo — o campo "pncp" é apenas o seletor de UF.
+      // Remover evita erro de duplicidade ao cadastrar várias licitações da mesma UF.
+      delete dataToSave.cd_pn;
 
       // Converte dt_publicacao do formulário para dt_encerramento_proposta no banco
       // Sempre salva em dt_encerramento_proposta em horário de Brasília (21:00)
@@ -2473,17 +2480,21 @@ export default function LicitacaoCadastro() {
               <Button
                 variant="secondary"
                 size="icon"
-                className="rounded-full w-9 h-9"
+                className="rounded-full w-9 h-9 bg-blue-600 hover:bg-blue-700 text-white"
+                title="Localizar licitações cadastradas deste órgão (filtra por tipo, se preenchido)"
                 onClick={async () => {
-                  // Se Tipo e Orgão estão preenchidos, abre lista de licitações cadastradas
-                  if (formData.modalidade && formData.orgao_pncp) {
+                  // Com um órgão selecionado, abre a lista de licitações cadastradas
+                  // desse órgão (filtra por tipo se estiver preenchido).
+                  if (formData.orgao_pncp) {
+                    const orgaoNome = orgaos.find(o => o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp)?.nome_orgao || formData.orgao_pncp;
                     setLicitacoesOrgaoTipoOpen(true);
                     setLicitacoesOrgaoTipoLoading(true);
+                    setLicitacoesOrgaoTipo([]);
                     try {
                       const tipoObj = tipos.find(t => t.id === formData.modalidade);
                       const params: Record<string, string> = {
                         cadastrado: 'true',
-                        orgao_pncp: formData.orgao_pncp,
+                        orgao_pncp: orgaoNome,
                         sort: 'num_ativa',
                         order: 'desc',
                         include_tipo: 'true',
@@ -2772,22 +2783,27 @@ export default function LicitacaoCadastro() {
                   }}
                 >
                     <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
+                      <div
                         role="combobox"
                         aria-expanded={tipoPopupOpen}
-                        className="h-9 flex-1 justify-between font-normal bg-white text-xs min-w-0"
                         tabIndex={2}
+                        className="flex h-9 flex-1 items-center justify-between rounded-md border border-input bg-white px-3 py-2 text-xs font-normal ring-offset-background hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-pointer min-w-0"
                       >
-                      <span className="truncate flex-1 text-left">
-                        {formData.modalidade
-                          ? tipos.find((tipo) => tipo.id === formData.modalidade) 
-                            ? `${tipos.find((tipo) => tipo.id === formData.modalidade)?.sigla} - ${tipos.find((tipo) => tipo.id === formData.modalidade)?.descricao}`
-                            : "Selecione o Tipo"
-                          : "Selecione o Tipo"}
-                      </span>
+                      {formData.modalidade && tipos.find((tipo) => tipo.id === formData.modalidade)
+                        ? (
+                          <span
+                            className="truncate flex-1 text-left select-text cursor-text"
+                            title="Arraste para selecionar e copiar"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {`${tipos.find((tipo) => tipo.id === formData.modalidade)?.sigla} - ${tipos.find((tipo) => tipo.id === formData.modalidade)?.descricao}`}
+                          </span>
+                        )
+                        : <span className="truncate flex-1 text-left text-muted-foreground">Selecione o Tipo</span>}
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 flex-shrink-0" />
-                    </Button>
+                    </div>
                   </PopoverTrigger>
                   <PopoverContent 
                     className="w-[--radix-popover-trigger-width] p-0" 
@@ -2954,6 +2970,8 @@ export default function LicitacaoCadastro() {
                 onKeyDown={(e) => {
                   if (e.key === 'Tab' && !e.shiftKey) {
                     e.preventDefault();
+                    // Reexecuta a verificação de duplicidade (reabre o aviso mesmo após "Não")
+                    setDupCheckTrigger(v => v + 1);
                     const dataInput = document.getElementById('dt_publicacao') as HTMLElement;
                     if (dataInput) {
                       dataInput.focus();
@@ -3058,21 +3076,31 @@ export default function LicitacaoCadastro() {
                 }}
               >
                 <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
+                  <div
                     role="combobox"
                     aria-expanded={orgaoPopupOpen}
-                    className="h-9 flex-1 justify-between font-normal bg-white"
                     tabIndex={5}
+                    className="flex h-9 flex-1 items-center justify-between rounded-md border border-input bg-white px-3 py-2 text-sm font-normal ring-offset-background hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-pointer"
                   >
                     {formData.orgao_pncp
                       ? (() => {
                           const orgaoEncontrado = orgaos.find((orgao) => orgao.id === formData.orgao_pncp || orgao.nome_orgao === formData.orgao_pncp);
-                          return orgaoEncontrado ? orgaoEncontrado.nome_orgao : formData.orgao_pncp;
+                          const nome = orgaoEncontrado ? orgaoEncontrado.nome_orgao : formData.orgao_pncp;
+                          return (
+                            <span
+                              className="truncate select-text cursor-text"
+                              title="Arraste para selecionar e copiar"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {nome}
+                            </span>
+                          );
                         })()
-                      : "Selecione o Orgão"}
+                      : <span className="truncate text-muted-foreground">Selecione o Orgão</span>}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
+                  </div>
                 </PopoverTrigger>
                 <PopoverContent 
                   className="w-[--radix-popover-trigger-width] p-0" 
@@ -3201,6 +3229,7 @@ export default function LicitacaoCadastro() {
                 size="icon"
                 className="rounded-full w-9 h-9 shrink-0 bg-gray-400 hover:bg-gray-500 text-white"
                 type="button"
+                title="Buscar órgão"
                 onClick={() => setBuscarOrgaoPopupOpen(true)}
               >
                 <Search className="h-4 w-4" />
@@ -3438,7 +3467,10 @@ export default function LicitacaoCadastro() {
             <DialogTitle className="text-lg">
               Licitações Cadastradas
               <span className="text-sm font-normal text-muted-foreground ml-2">
-                {tipos.find(t => t.id === formData.modalidade)?.sigla} — {formData.orgao_pncp}
+                {(() => {
+                  const s = tipos.find(t => t.id === formData.modalidade)?.sigla;
+                  return s ? `${s} — ${formData.orgao_pncp}` : formData.orgao_pncp;
+                })()}
               </span>
             </DialogTitle>
           </DialogHeader>
@@ -3448,7 +3480,7 @@ export default function LicitacaoCadastro() {
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
             ) : licitacoesOrgaoTipo.length === 0 ? (
-              <p className="text-center text-muted-foreground py-12">Nenhuma licitação cadastrada encontrada para este orgão e tipo.</p>
+              <p className="text-center text-muted-foreground py-12">Nenhuma licitação cadastrada encontrada para este órgão{formData.modalidade ? ' e tipo' : ''}.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead className="bg-muted sticky top-0">
@@ -3580,13 +3612,35 @@ export default function LicitacaoCadastro() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Dialog de alerta de duplicidade */}
-      <AlertDialog open={duplicidadeDialogOpen} onOpenChange={setDuplicidadeDialogOpen}>
-        <AlertDialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-base font-semibold">Deseja Alterar a licitação existente?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="text-muted-foreground space-y-1.5 mt-2" style={{ fontSize: '12px' }}>
+      {/* Dialog de alerta de duplicidade — flutuante, sem fundo escuro e arrastável */}
+      <DraggableDialog
+        open={duplicidadeDialogOpen}
+        width={512}
+        title={<h2 className="text-base font-semibold text-foreground">Deseja Alterar a licitação existente?</h2>}
+        footer={
+          <div className="flex flex-row justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => { setDuplicidadeDialogOpen(false); setLicitacaoDuplicadaInfo(null); }}
+            >
+              Não
+            </Button>
+            <Button
+              className="bg-[#5046E5] hover:bg-[#4338CA] text-white"
+              onClick={() => {
+                const conteudoAtual = formData.conteudo || '';
+                const novoConteudo = `\n\n-------------------------\n${conteudoAtual}`;
+                setFormData(prev => ({ ...prev, conteudo: novoConteudo }));
+                setDuplicidadeDialogOpen(false);
+                setLicitacaoDuplicadaInfo(null);
+              }}
+            >
+              Sim
+            </Button>
+          </div>
+        }
+      >
+              <div className="text-muted-foreground space-y-1.5" style={{ fontSize: '12px' }}>
                 {licitacaoDuplicadaInfo && (() => {
                   const info = licitacaoDuplicadaInfo;
                   const formatarData = (dt: string | null | undefined) => {
@@ -3628,7 +3682,7 @@ export default function LicitacaoCadastro() {
                       <p><strong>Unidade Compradora:</strong> {[info.un_cod, info.unidade].filter(Boolean).join(' - ') || '—'}</p>
                       <p><strong>Modalidade da compra:</strong> {info.modalidade || '—'}</p>
                       <p><strong>ID Contratação PNCP:</strong> {info.num_licitacao || '—'}</p>
-                      <p><strong>Objeto:</strong> {info.conteudo ? (info.conteudo.length > 200 ? info.conteudo.substring(0, 200) + '...' : info.conteudo) : '—'}</p>
+                      <p className="whitespace-pre-wrap break-words"><strong>Objeto:</strong> {info.conteudo || '—'}</p>
                       <p><strong>Valor Estimado:</strong> {formatarValor(info.valor_estimado) || '—'}</p>
                       <p><strong>Data Fim de recebimento de proposta:</strong> {formatarDataHora(info.dt_encerramento_proposta) || '—'}</p>
                       <p><strong>Última atualização:</strong> {formatarData(info.dt_atualizacao) || '—'}</p>
@@ -3636,30 +3690,7 @@ export default function LicitacaoCadastro() {
                   );
                 })()}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-row gap-2 sm:gap-0">
-            <AlertDialogCancel 
-              onClick={() => { setDuplicidadeDialogOpen(false); setLicitacaoDuplicadaInfo(null); }}
-              className="sm:mr-2"
-            >
-              Não
-            </AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={() => {
-                const conteudoAtual = formData.conteudo || '';
-                const novoConteudo = `\n\n-------------------------\n${conteudoAtual}`;
-                setFormData(prev => ({ ...prev, conteudo: novoConteudo }));
-                setDuplicidadeDialogOpen(false);
-                setLicitacaoDuplicadaInfo(null);
-              }}
-              className="bg-[#5046E5] hover:bg-[#4338CA]"
-            >
-              Sim
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      </DraggableDialog>
 
       {/* Floating panel de palavras-chave (abaixo ou acima do item clicado) */}
       {palavrasChavesModalOpen && palavrasChavesFloatingPos && (

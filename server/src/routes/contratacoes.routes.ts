@@ -234,11 +234,20 @@ export default async function contratacoesRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const contratacao = await fastify.prisma.contratacoes.update({
-      where: { id },
-      data: body,
-    });
-    return reply.send(contratacao);
+    try {
+      const contratacao = await fastify.prisma.contratacoes.update({
+        where: { id },
+        data: body,
+      });
+      return reply.send(contratacao);
+    } catch (err: any) {
+      // Violação de constraint única — retorna erro claro em vez de 500 opaco
+      if (err?.code === 'P2002') {
+        const campo = Array.isArray(err?.meta?.target) ? err.meta.target.join(', ') : (err?.meta?.target || 'campo único');
+        return reply.status(409).send({ error: `Já existe um registro com esse valor em: ${campo}.` });
+      }
+      throw err;
+    }
   });
 
   // PATCH /api/contratacoes/batch — atualiza varios de uma vez
