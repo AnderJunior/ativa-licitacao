@@ -11,11 +11,24 @@ export default async function contratacoesRoutes(fastify: FastifyInstance) {
     // Filtros booleanos
     if (q.cadastrado !== undefined) where.cadastrado = q.cadastrado === 'true';
     if (q.enviada !== undefined) where.enviada = q.enviada === 'true';
-    // Nota: campo 'excluido' nao existe no schema — filtros ignorados
+    // Exclusao logica: hide_excluido esconde os excluidos (registros antigos tem
+    // excluido = NULL, por isso o "not: true" em vez de "false").
+    if (q.excluido !== undefined) where.excluido = q.excluido === 'true';
+    else if (q.hide_excluido === 'true') where.excluido = { not: true };
 
-    // Texto search
-    if (q.orgao_pncp) where.orgao_pncp = { contains: q.orgao_pncp, mode: 'insensitive' };
-    if (q.municipio) where.municipio = { contains: q.municipio, mode: 'insensitive' };
+    // Texto search — orgao e municipio ignoram acento ("Piuma" acha "PIÚMA").
+    // O ILIKE do Postgres so ignora maiuscula, por isso resolvemos primeiro os
+    // valores distintos com f_unaccent (indexado) e filtramos por IN.
+    const valoresSemAcento = async (coluna: 'orgao_pncp' | 'municipio', termo: string) => {
+      const rows = await fastify.prisma.$queryRawUnsafe<{ v: string }[]>(
+        `SELECT DISTINCT ${coluna} AS v FROM contratacoes
+         WHERE ${coluna} IS NOT NULL AND f_unaccent(${coluna}) ILIKE f_unaccent($1)`,
+        `%${termo}%`,
+      );
+      return rows.map(r => r.v);
+    };
+    if (q.orgao_pncp) where.orgao_pncp = { in: await valoresSemAcento('orgao_pncp', q.orgao_pncp) };
+    if (q.municipio) where.municipio = { in: await valoresSemAcento('municipio', q.municipio) };
     if (q.num_ativa) where.num_ativa = { contains: q.num_ativa, mode: 'insensitive' };
     if (q.cd_pn) where.cd_pn = { contains: q.cd_pn, mode: 'insensitive' };
 
@@ -79,10 +92,13 @@ export default async function contratacoesRoutes(fastify: FastifyInstance) {
       where.id = { ...(where.id || {}), notIn: excludeIds };
     }
 
-    // Sorting
+    // Sorting — nulls=last evita que registros sem o campo ordenado apareçam
+    // no topo (padrao do Postgres em DESC e NULLS FIRST).
     const orderField = q.sort || 'dt_publicacao';
     const orderDir = q.order === 'asc' ? 'asc' : 'desc';
-    const orderBy: any = { [orderField]: orderDir };
+    const orderBy: any = q.nulls === 'last'
+      ? { [orderField]: { sort: orderDir, nulls: 'last' } }
+      : { [orderField]: orderDir };
 
     // Include tipo_licitacao relation?
     const wantsTipo = q.include_tipo === 'true';

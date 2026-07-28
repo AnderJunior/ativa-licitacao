@@ -25,6 +25,7 @@ model users {
   updated_at    DateTime          @default(now()) @updatedAt @db.Timestamptz(6)
   permissoes    user_permissoes[]
   contratacoes  contratacoes[]    @relation("cadastrado_por")
+  relatorios    relatorios_envio[] @relation("relatorio_enviado_por")
 }
 
 // ─── Permissões ─────────────────────────────────────────
@@ -104,6 +105,7 @@ model contratacoes {
   tipo_licitacao           tipo_licitacoes?         @relation(fields: [descricao_modalidade], references: [id])
   user                     users?                  @relation("cadastrado_por", fields: [cadastrado_por], references: [id])
   marcacoes                contratacoes_marcacoes[]
+  envios                   relatorios_envio_itens[]
 }
 
 model contratacoes_marcacoes {
@@ -212,6 +214,7 @@ model clientes {
   emails                 clientes_emails[]
   perfis                 clientes_perfis[]
   grupos_orgaos          clientes_grupos_orgaos[]
+  relatorios             relatorios_envio[]
 }
 
 model clientes_emails {
@@ -260,6 +263,40 @@ model clientes_grupos_orgaos {
   grupo      grupo_de_orgaos @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
 
   @@unique([cliente_id, grupo_id])
+}
+
+// ─── Envio de relatorios ao cliente ─────────────────────
+
+/// Um relatorio enviado a um cliente. Reune varias licitacoes sob um
+/// unico numero (o "N.Relatorio") e uma unica data de envio.
+model relatorios_envio {
+  id            String                   @id @default(uuid()) @db.Uuid
+  num_relatorio Int                      @unique
+  cliente_id    String                   @db.Uuid
+  dt_envio      DateTime                 @db.Timestamptz(6)
+  enviado_por   String?                  @db.Uuid
+  observacoes   String?
+  created_at    DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
+  cliente       clientes                 @relation(fields: [cliente_id], references: [id])
+  usuario       users?                   @relation("relatorio_enviado_por", fields: [enviado_por], references: [id])
+  itens         relatorios_envio_itens[]
+
+  @@index([cliente_id])
+  @@index([dt_envio])
+}
+
+/// As licitacoes que compoem um relatorio.
+model relatorios_envio_itens {
+  id             String           @id @default(uuid()) @db.Uuid
+  relatorio_id   String           @db.Uuid
+  contratacao_id String           @db.Uuid
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  relatorio      relatorios_envio @relation(fields: [relatorio_id], references: [id], onDelete: Cascade)
+  contratacao    contratacoes     @relation(fields: [contratacao_id], references: [id], onDelete: Cascade)
+
+  @@unique([relatorio_id, contratacao_id])
+  @@index([contratacao_id])
 }
 
 // ─── Outros ─────────────────────────────────────────────

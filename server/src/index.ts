@@ -19,6 +19,7 @@ import contratacoesRoutes from './routes/contratacoes.routes.js';
 import clientesRoutes from './routes/clientes.routes.js';
 import permissoesRoutes from './routes/permissoes.routes.js';
 import pncpSyncRoutes from './routes/pncp-sync.routes.js';
+import relatoriosEnvioRoutes from './routes/relatorios-envio.routes.js';
 
 // Services
 import { startPncpCron } from './services/pncp-sync.service.js';
@@ -48,6 +49,7 @@ async function main() {
   await fastify.register(clientesRoutes);
   await fastify.register(permissoesRoutes);
   await fastify.register(pncpSyncRoutes);
+  await fastify.register(relatoriosEnvioRoutes);
 
   // ── Start ────────────────────────────────────────────
   try {

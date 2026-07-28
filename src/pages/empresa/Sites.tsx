@@ -210,7 +210,7 @@ export default function Sites() {
       <div className="bg-white rounded-lg border border-border p-6 h-full flex flex-col">
         <div className="flex items-start justify-between mb-[12px]">
           <h1 className="text-xl font-bold text-[#262626]">Sites</h1>
-          {canSalvar('/empresa/sites') && (
+          {canSalvar('/orgaos/sites') && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button className="bg-[#02572E] text-white hover:bg-[#024a27]">
@@ -257,7 +257,7 @@ export default function Sites() {
           )}
 
           {/* Dialog de Edição */}
-          {canSalvar('/empresa/sites') && (
+          {canSalvar('/orgaos/sites') && (
             <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
               <DialogContent>
                 <DialogHeader>
@@ -444,7 +444,7 @@ export default function Sites() {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
-                          {canExcluir('/empresa/sites') && (
+                          {canExcluir('/orgaos/sites') && (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button

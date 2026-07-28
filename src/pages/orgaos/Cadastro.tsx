@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft, Trash2 } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
+import { PncpOrgaoInfo, type PncpOrgaoDados } from '@/components/orgaos/PncpOrgaoInfo';
 import { cn } from '@/lib/utils';
 import { usePermissoes } from '@/contexts/PermissoesContext';
 
@@ -53,6 +54,8 @@ export default function OrgaoCadastro() {
   const [grupos, setGrupos] = useState<GrupoOrgao[]>([]);
   const [selectedGrupo, setSelectedGrupo] = useState<string>('');
   const [grupoPopupOpen, setGrupoPopupOpen] = useState(false);
+  const [pncpDados, setPncpDados] = useState<PncpOrgaoDados | null>(null);
+  const [loadingPncp, setLoadingPncp] = useState(false);
   const [cidadePopupOpen, setCidadePopupOpen] = useState(false);
   const [cidadeDisplay, setCidadeDisplay] = useState('');
 
@@ -82,6 +85,9 @@ export default function OrgaoCadastro() {
     loadSites();
     if (orgaoId) {
       loadOrgao(orgaoId);
+      loadPncp(orgaoId);
+    } else {
+      setPncpDados(null);
     }
   }, [orgaoId]);
 
@@ -119,6 +125,18 @@ export default function OrgaoCadastro() {
       cidade_ibge: cidadeId,
     }));
     setCidadeDisplay(`${uf} - ${cidadeNome}`);
+  };
+
+  // Dados do PNCP vêm da associação por CNPJ, não do campo obs_pncp
+  const loadPncp = async (id: string) => {
+    setLoadingPncp(true);
+    try {
+      setPncpDados(await api.get<PncpOrgaoDados>('/api/orgaos/' + id + '/pncp'));
+    } catch {
+      setPncpDados(null);
+    } finally {
+      setLoadingPncp(false);
+    }
   };
 
   const loadOrgao = async (id: string) => {
@@ -545,15 +563,11 @@ export default function OrgaoCadastro() {
             />
           </div>
           <div className="col-span-3 space-y-0.5">
-            <Label htmlFor="obs_pncp" className="text-[14px] font-normal text-[#262626]">PNCP</Label>
-            <Textarea
-              id="obs_pncp"
-              placeholder="Adicione anotações do Orgão"
-              value={formData.obs_pncp || ''}
-              onChange={(e) => setFormData({ ...formData, obs_pncp: e.target.value })}
-              className="resize-none h-[142px] text-[14px] bg-white"
-              disabled={isViewMode}
-            />
+            <Label className="text-[14px] font-normal text-[#262626]">PNCP</Label>
+            <PncpOrgaoInfo dados={pncpDados} carregando={loadingPncp} className="h-[142px]" />
+            {formData.obs_pncp?.trim() && (
+              <p className="text-[11px] text-muted-foreground whitespace-pre-wrap pt-1">{formData.obs_pncp}</p>
+            )}
           </div>
           <div className="col-span-5">
             <Label className="text-[14px] font-normal text-[#262626]">E-mails</Label>

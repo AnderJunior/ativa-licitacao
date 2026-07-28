@@ -6,6 +6,18 @@ const MODALIDADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const PAGE_SIZE = 50;
 const DELAY_BETWEEN_PAGES_MS = 1000; // 1s entre paginas (evitar rate limit)
 const DELAY_BETWEEN_MODALITIES_MS = 500;
+const TENTATIVAS_POR_PAGINA = 3; // Uma falha de rede perdia a pagina inteira em silencio
+const DELAY_ENTRE_TENTATIVAS_MS = 2000;
+
+/**
+ * Horizonte de busca, em dias.
+ *
+ * O endpoint /contratacoes/proposta filtra pelo ENCERRAMENTO do recebimento de
+ * propostas. Com o valor antigo (30) uma licitacao publicada hoje com prazo de
+ * 45 dias so era importada 15 dias depois, e a consulta do dia mostrava uma
+ * fracao do que existia no PNCP. 180 dias cobre praticamente todos os prazos.
+ */
+const HORIZONTE_DIAS = 180;
 
 // ── Tipos da API PNCP ────────────────────────────────────
 interface PncpOrgaoEntidade {
@@ -48,6 +60,7 @@ interface PncpResponse {
 
 export interface SyncResult {
   inserted: number;
+  updated: number;
   skipped: number;
   errors: number;
   startedAt: string;
@@ -70,10 +83,10 @@ export function getSyncStatus() {
 
 // ── Helpers ───────────────────────────────────────────────
 
-/** Retorna data 30 dias a frente no formato yyyyMMdd */
-function formatDate30DaysAhead(): string {
+/** Retorna a data do fim do horizonte de busca no formato yyyyMMdd */
+function formatDataFinalHorizonte(): string {
   const d = new Date();
-  d.setDate(d.getDate() + 30);
+  d.setDate(d.getDate() + HORIZONTE_DIAS);
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
@@ -102,19 +115,28 @@ async function fetchPncpPage(
   url.searchParams.set('pagina', String(pagina));
   url.searchParams.set('tamanhoPagina', String(PAGE_SIZE));
 
-  try {
-    const res = await fetch(url.toString(), {
-      headers: { accept: '*/*' },
-    });
-    if (!res.ok) {
-      console.error(`[PNCP] HTTP ${res.status} ao buscar modalidade ${modalidade} pagina ${pagina}`);
-      return null;
+  // Sem retry, uma falha momentanea descartava as 50 licitacoes da pagina em silencio.
+  for (let tentativa = 1; tentativa <= TENTATIVAS_POR_PAGINA; tentativa++) {
+    try {
+      const res = await fetch(url.toString(), { headers: { accept: '*/*' } });
+      if (res.ok) return (await res.json()) as PncpResponse;
+
+      // 204 = pagina sem conteudo; nao adianta insistir.
+      if (res.status === 204) return null;
+      console.error(
+        `[PNCP] HTTP ${res.status} modalidade ${modalidade} pagina ${pagina} (tentativa ${tentativa}/${TENTATIVAS_POR_PAGINA})`,
+      );
+    } catch (err) {
+      console.error(
+        `[PNCP] Erro de rede modalidade ${modalidade} pagina ${pagina} (tentativa ${tentativa}/${TENTATIVAS_POR_PAGINA}):`,
+        err,
+      );
     }
-    return (await res.json()) as PncpResponse;
-  } catch (err) {
-    console.error(`[PNCP] Erro de rede modalidade ${modalidade} pagina ${pagina}:`, err);
-    return null;
+    if (tentativa < TENTATIVAS_POR_PAGINA) await delay(DELAY_ENTRE_TENTATIVAS_MS * tentativa);
   }
+
+  console.error(`[PNCP] FALHA definitiva: modalidade ${modalidade} pagina ${pagina} nao foi importada`);
+  return null;
 }
 
 /** Busca o proximo num_ativa disponivel */
@@ -127,86 +149,138 @@ async function getNextNumAtiva(prisma: PrismaClient): Promise<number> {
   return Number(result[0]?.next_num || 1);
 }
 
+/** Chave de identidade de uma contratacao: numero PNCP + unidade + modalidade. */
+function chaveContratacao(numeroControlePNCP: string | null, unCod: string | null, modalidadeId: number | null): string {
+  return `${numeroControlePNCP}|${unCod}|${modalidadeId}`;
+}
+
+/**
+ * Campos que pertencem ao PNCP — os unicos que o sync pode escrever.
+ * Fora desta lista ficam os campos de trabalho da equipe (num_ativa, cadastrado,
+ * enviada, lida, excluido, descricao_modalidade, links, textos_cadastro_manual),
+ * que o sync nunca deve tocar.
+ */
+function camposDoPncp(item: PncpContratacao) {
+  return {
+    uf: item.unidadeOrgao?.ufSigla || null,
+    titulo: `${item.tipoInstrumentoConvocatorioNome || ''} nº ${item.numeroCompra || ''}`,
+    municipio: item.unidadeOrgao?.municipioNome || null,
+    unidade: item.unidadeOrgao?.nomeUnidade || null,
+    orgao_pncp: item.orgaoEntidade?.razaoSocial || null,
+    cnpj: item.orgaoEntidade?.cnpj || null,
+    modalidade: item.modalidadeNome || null,
+    conteudo: item.objetoCompra || null,
+    dt_criacao: item.dataAtualizacaoGlobal || null,
+    dt_publicacao: item.dataPublicacaoPncp || null,
+    dt_atualizacao: item.dataAtualizacao || null,
+    dt_vigencia_ini: item.dataAberturaProposta || null,
+    poder: item.orgaoEntidade?.poderId === 'N'
+      ? 'Não se aplica'
+      : (item.orgaoEntidade?.poderId || null),
+    valor_estimado: item.valorTotalEstimado || null,
+    link_processo: `https://pncp.gov.br/app/editais/${item.orgaoEntidade?.cnpj}/${item.anoCompra}/${item.sequencialCompra}`,
+    ano_compra: item.anoCompra != null ? String(item.anoCompra) : null,
+    sequencial_compra: item.sequencialCompra != null ? String(item.sequencialCompra) : null,
+    dt_encerramento_proposta: item.dataEncerramentoProposta || null,
+  };
+}
+
 /**
  * Processa uma pagina de resultados PNCP:
- * - Verifica quais ja existem no banco
- * - Insere os novos (sem num_ativa — só recebe quando for cadastrada)
+ * - Insere as novas em lote (sem num_ativa — só recebe quando for cadastrada)
+ * - Atualiza as que o PNCP alterou, desde que ainda NAO estejam cadastradas
+ * - Nao encosta nas ja cadastradas, para nao sobrescrever trabalho manual
  */
-async function processPage(
+export async function processPage(
   prisma: PrismaClient,
   items: PncpContratacao[],
-): Promise<{ inserted: number; skipped: number; errors: number }> {
+): Promise<{ inserted: number; updated: number; skipped: number; errors: number }> {
   let inserted = 0;
+  let updated = 0;
   let skipped = 0;
   let errors = 0;
 
-  // Buscar quais num_licitacao ja existem no banco (batch lookup)
-  const numLicitacoes = items
-    .filter(i => i.numeroControlePNCP)
-    .map(i => i.numeroControlePNCP);
+  const validos = items.filter(i => i.numeroControlePNCP);
+  if (validos.length === 0) return { inserted, updated, skipped, errors };
 
-  const existingRecords = await prisma.contratacoes.findMany({
-    where: { num_licitacao: { in: numLicitacoes } },
-    select: { num_licitacao: true, un_cod: true, id_codigo_modalidade: true },
+  const existentesDb = await prisma.contratacoes.findMany({
+    where: { num_licitacao: { in: validos.map(i => i.numeroControlePNCP) } },
+    select: {
+      id: true, num_licitacao: true, un_cod: true, id_codigo_modalidade: true,
+      cadastrado: true, dt_atualizacao: true,
+    },
   });
 
-  // Criar um Set para lookup rapido: "numLicitacao|unCod|modalidadeId"
-  const existingSet = new Set(
-    existingRecords.map(r => `${r.num_licitacao}|${r.un_cod}|${r.id_codigo_modalidade}`),
-  );
+  const existentes = new Map<string, (typeof existentesDb)[number]>();
+  existentesDb.forEach(r => existentes.set(chaveContratacao(r.num_licitacao, r.un_cod, r.id_codigo_modalidade), r));
 
-  for (const item of items) {
-    if (!item.numeroControlePNCP) continue;
+  const novos: any[] = [];
+  const paraAtualizar: { id: string; data: ReturnType<typeof camposDoPncp> }[] = [];
+  const vistosNestaPagina = new Set<string>();
 
-    const key = `${item.numeroControlePNCP}|${item.unidadeOrgao?.codigoUnidade}|${item.modalidadeId}`;
+  for (const item of validos) {
+    const key = chaveContratacao(item.numeroControlePNCP, item.unidadeOrgao?.codigoUnidade || null, item.modalidadeId);
 
-    if (existingSet.has(key)) {
-      skipped++;
+    // A mesma contratacao pode vir repetida na pagina — nao inserir duas vezes.
+    if (vistosNestaPagina.has(key)) { skipped++; continue; }
+    vistosNestaPagina.add(key);
+
+    const existente = existentes.get(key);
+
+    if (!existente) {
+      novos.push({
+        ...camposDoPncp(item),
+        num_licitacao: item.numeroControlePNCP,
+        id_codigo_modalidade: item.modalidadeId,
+        un_cod: item.unidadeOrgao?.codigoUnidade || null,
+        regiao: '',
+        dt_importacao: formatNow(),
+        tipo_cadastro: 'pncp',
+      });
       continue;
     }
 
+    // Ja cadastrada pela equipe: preserva como esta.
+    if (existente.cadastrado === true) { skipped++; continue; }
+
+    // O PNCP nao alterou nada desde a ultima importacao.
+    if (existente.dt_atualizacao === (item.dataAtualizacao || null)) { skipped++; continue; }
+
+    paraAtualizar.push({ id: existente.id, data: camposDoPncp(item) });
+  }
+
+  if (novos.length > 0) {
     try {
-      await prisma.contratacoes.create({
-        data: {
-          num_licitacao: item.numeroControlePNCP,
-          id_codigo_modalidade: item.modalidadeId,
-          regiao: '',
-          uf: item.unidadeOrgao?.ufSigla || null,
-          titulo: `${item.tipoInstrumentoConvocatorioNome || ''} nº ${item.numeroCompra || ''}`,
-          municipio: item.unidadeOrgao?.municipioNome || null,
-          unidade: item.unidadeOrgao?.nomeUnidade || null,
-          un_cod: item.unidadeOrgao?.codigoUnidade || null,
-          orgao_pncp: item.orgaoEntidade?.razaoSocial || null,
-          cnpj: item.orgaoEntidade?.cnpj || null,
-          modalidade: item.modalidadeNome || null,
-          conteudo: item.objetoCompra || null,
-          dt_criacao: item.dataAtualizacaoGlobal || null,
-          dt_importacao: formatNow(),
-          dt_publicacao: item.dataPublicacaoPncp || null,
-          dt_atualizacao: item.dataAtualizacao || null,
-          dt_vigencia_ini: item.dataAberturaProposta || null,
-          poder: item.orgaoEntidade?.poderId === 'N'
-            ? 'Não se aplica'
-            : (item.orgaoEntidade?.poderId || null),
-          valor_estimado: item.valorTotalEstimado || null,
-          link_processo: `https://pncp.gov.br/app/editais/${item.orgaoEntidade?.cnpj}/${item.anoCompra}/${item.sequencialCompra}`,
-          ano_compra: item.anoCompra != null ? String(item.anoCompra) : null,
-          sequencial_compra: item.sequencialCompra != null ? String(item.sequencialCompra) : null,
-          dt_encerramento_proposta: item.dataEncerramentoProposta || null,
-          tipo_cadastro: 'pncp',
-        },
-      });
-      inserted++;
+      const res = await prisma.contratacoes.createMany({ data: novos, skipDuplicates: true });
+      inserted += res.count;
     } catch (err: any) {
-      errors++;
-      // Pode ser unique constraint violation se dois itens identicos chegarem na mesma batch
-      if (!err.message?.includes('Unique constraint')) {
-        console.error(`[PNCP] Erro ao inserir ${item.numeroControlePNCP}:`, err.message);
+      // Se o lote falhar, cai para insercao individual para nao perder a pagina toda.
+      console.error(`[PNCP] Lote de ${novos.length} falhou, inserindo individualmente:`, err.message);
+      for (const novo of novos) {
+        try {
+          await prisma.contratacoes.create({ data: novo });
+          inserted++;
+        } catch (e: any) {
+          errors++;
+          if (!e.message?.includes('Unique constraint')) {
+            console.error(`[PNCP] Erro ao inserir ${novo.num_licitacao}:`, e.message);
+          }
+        }
       }
     }
   }
 
-  return { inserted, skipped, errors };
+  for (const alvo of paraAtualizar) {
+    try {
+      await prisma.contratacoes.update({ where: { id: alvo.id }, data: alvo.data });
+      updated++;
+    } catch (err: any) {
+      errors++;
+      console.error(`[PNCP] Erro ao atualizar ${alvo.id}:`, err.message);
+    }
+  }
+
+  return { inserted, updated, skipped, errors };
 }
 
 // ── Funcao principal de sync ──────────────────────────────
@@ -221,13 +295,14 @@ export async function syncPncp(prisma: PrismaClient): Promise<SyncResult> {
   const startedAt = new Date();
 
   let totalInserted = 0;
+  let totalUpdated = 0;
   let totalSkipped = 0;
   let totalErrors = 0;
 
   try {
-    const dataFinal = formatDate30DaysAhead();
+    const dataFinal = formatDataFinalHorizonte();
     console.log(`\n[PNCP Sync] ======================================`);
-    console.log(`[PNCP Sync] Iniciando sync — dataFinal=${dataFinal}`);
+    console.log(`[PNCP Sync] Iniciando sync — dataFinal=${dataFinal} (horizonte de ${HORIZONTE_DIAS} dias)`);
     console.log(`[PNCP Sync] Modalidades: ${MODALIDADES.join(', ')}`);
     console.log(`[PNCP Sync] ======================================\n`);
 
@@ -259,13 +334,14 @@ export async function syncPncp(prisma: PrismaClient): Promise<SyncResult> {
 
         const result = await processPage(prisma, pageData.data);
         totalInserted += result.inserted;
+        totalUpdated += result.updated;
         totalSkipped += result.skipped;
         totalErrors += result.errors;
 
-        if (result.inserted > 0) {
+        if (result.inserted > 0 || result.updated > 0) {
           console.log(
             `[PNCP Sync] Modalidade ${modalidade} pagina ${pagina}/${totalPaginas}: ` +
-            `+${result.inserted} inseridos, ${result.skipped} existentes`,
+            `+${result.inserted} inseridos, ~${result.updated} atualizados, ${result.skipped} sem mudanca`,
           );
         }
 
@@ -285,6 +361,7 @@ export async function syncPncp(prisma: PrismaClient): Promise<SyncResult> {
 
     const result: SyncResult = {
       inserted: totalInserted,
+      updated: totalUpdated,
       skipped: totalSkipped,
       errors: totalErrors,
       startedAt: startedAt.toISOString(),
@@ -296,7 +373,8 @@ export async function syncPncp(prisma: PrismaClient): Promise<SyncResult> {
     console.log(`\n[PNCP Sync] ======================================`);
     console.log(`[PNCP Sync] Concluido em ${durationStr}`);
     console.log(`[PNCP Sync]   Inseridos: ${totalInserted}`);
-    console.log(`[PNCP Sync]   Ja existiam: ${totalSkipped}`);
+    console.log(`[PNCP Sync]   Atualizados: ${totalUpdated}`);
+    console.log(`[PNCP Sync]   Sem mudanca: ${totalSkipped}`);
     console.log(`[PNCP Sync]   Erros: ${totalErrors}`);
     console.log(`[PNCP Sync] ======================================\n`);
 
@@ -358,19 +436,24 @@ let cronInterval: NodeJS.Timeout | null = null;
 export function startPncpCron(prisma: PrismaClient) {
   const THIRTY_MINUTES = 30 * 60 * 1000;
 
-  console.log(`[PNCP Cron] Agendado para rodar a cada 30 minutos`);
+  console.log(`[PNCP Cron] Agendado para rodar a cada 30 minutos (horizonte de ${HORIZONTE_DIAS} dias)`);
+
+  // Com o horizonte maior um ciclo pode passar de 30 min. Nesse caso a proxima
+  // execucao apenas aguarda, em vez de registrar erro a cada disparo.
+  const executar = (origem: string) => {
+    if (isSyncing) {
+      console.log(`[PNCP Cron] ${origem}: ciclo anterior ainda em andamento, aguardando o proximo horario`);
+      return;
+    }
+    console.log(`[PNCP Cron] ${origem}...`);
+    syncPncp(prisma).catch(err => console.error('[PNCP Cron] Erro na sync:', err.message));
+  };
 
   // Rodar a primeira vez apos 1 minuto (dar tempo do server iniciar)
-  setTimeout(() => {
-    console.log(`[PNCP Cron] Executando primeira sync...`);
-    syncPncp(prisma).catch(err => console.error('[PNCP Cron] Erro na sync:', err.message));
-  }, 60_000);
+  setTimeout(() => executar('Executando primeira sync'), 60_000);
 
   // Depois, a cada 30 minutos
-  cronInterval = setInterval(() => {
-    console.log(`[PNCP Cron] Executando sync agendada...`);
-    syncPncp(prisma).catch(err => console.error('[PNCP Cron] Erro na sync:', err.message));
-  }, THIRTY_MINUTES);
+  cronInterval = setInterval(() => executar('Executando sync agendada'), THIRTY_MINUTES);
 }
 
 export function stopPncpCron() {

@@ -21,6 +21,7 @@ interface LicitacaoEncontrada {
   uf: string | null;
   municipio: string | null;
   orgao_pncp: string | null;
+  cnpj: string | null; // Usado para resolver o órgão pela associação CNPJ → órgão cadastrado
   modalidade: string | null;
   num_licitacao: string | null;
   dt_publicacao: string | null;
@@ -76,6 +77,7 @@ export function BuscarLicitacaoPopup({
         num_ativa: numAtiva,
         created_at_gte: inicioMes,
         created_at_lte: proximoMes,
+        hide_excluido: 'true',
       });
 
       if (!licitacoes || licitacoes.length === 0) {

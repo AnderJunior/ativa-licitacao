@@ -26,7 +26,13 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
     const where: any = {};
 
     if (search) {
-      where.nome_orgao = { contains: search, mode: 'insensitive' };
+      // ILIKE do Postgres ignora maiuscula mas NAO acento: "Piuma" nao acharia
+      // "PIÚMA". f_unaccent (com indice GIN) resolve nos dois sentidos.
+      const encontrados = await fastify.prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM orgaos
+        WHERE f_unaccent(nome_orgao) ILIKE f_unaccent(${'%' + search + '%'})
+      `;
+      where.id = { in: encontrados.map(o => o.id) };
     }
     if (uf) {
       where.uf = uf;
@@ -54,6 +60,55 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
     const orgao = await fastify.prisma.orgaos.findUnique({ where: { id } });
     if (!orgao) return reply.status(404).send({ error: 'Orgao nao encontrado' });
     return reply.send(orgao);
+  });
+
+  /**
+   * GET /api/orgaos/:id/pncp — dados do PNCP do órgão.
+   *
+   * O campo obs_pncp é uma anotação livre e na prática nunca é preenchido,
+   * por isso a caixa "PNCP" da tela aparecia vazia. Os dados reais vêm das
+   * licitações do CNPJ associado ao órgão (Consulta > Unidades > Associar).
+   */
+  fastify.get('/api/orgaos/:id/pncp', { preHandler: [requireAuth] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const vinculo = await fastify.prisma.orgaos_vinculados.findFirst({ where: { orgao_id: id } });
+    if (!vinculo?.cnpj) {
+      return reply.send({ associado: false, cnpj: null, unidades: [] });
+    }
+
+    // Uma linha por unidade compradora daquele CNPJ.
+    const linhas = await fastify.prisma.contratacoes.findMany({
+      where: { cnpj: vinculo.cnpj },
+      select: {
+        cnpj: true, esfera: true, poder: true, orgao_pncp: true,
+        un_cod: true, unidade: true, uf: true, municipio: true,
+      },
+      distinct: ['un_cod'],
+      orderBy: { un_cod: 'asc' },
+    });
+
+    if (linhas.length === 0) {
+      return reply.send({ associado: true, cnpj: vinculo.cnpj, esfera: null, poder: null, orgao_pncp: vinculo.orgao_nome, unidades: [] });
+    }
+
+    // Cabecalho vem do primeiro registro nao nulo de cada campo.
+    const primeiroNaoNulo = <K extends keyof (typeof linhas)[number]>(campo: K) =>
+      linhas.find(l => l[campo] != null)?.[campo] ?? null;
+
+    return reply.send({
+      associado: true,
+      cnpj: vinculo.cnpj,
+      esfera: primeiroNaoNulo('esfera'),
+      poder: primeiroNaoNulo('poder'),
+      orgao_pncp: primeiroNaoNulo('orgao_pncp') || vinculo.orgao_nome,
+      unidades: linhas.map(l => ({
+        un_cod: l.un_cod,
+        unidade: l.unidade,
+        uf: l.uf,
+        municipio: l.municipio,
+      })),
+    });
   });
 
   // POST /api/orgaos

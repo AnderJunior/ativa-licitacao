@@ -55,13 +55,13 @@ const menuItems: MenuItem[] = [
       { label: 'Cadastro', path: '/orgaos/cadastro', icon: Plus },
       { label: 'Consulta', path: '/orgaos/consulta', icon: Search },
       { label: 'Agrupamentos', path: '/orgaos/agrupamentos', icon: UsersRound },
+      { label: 'Sites', path: '/orgaos/sites', icon: Globe },
     ],
   },
   {
     label: 'Empresa',
     icon: Building,
     children: [
-      { label: 'Sites', path: '/empresa/sites', icon: Globe },
       { label: 'Atividades', path: '/empresa/atividades', icon: ListTree },
       { label: 'Caixas de E-mail', path: '/empresa/caixas-email', icon: Mail },
       { label: 'Permissões de Acesso', path: '/empresa/permissoes', icon: Shield },

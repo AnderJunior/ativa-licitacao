@@ -46,7 +46,9 @@ const App = () => (
               <Route path="/orgaos/cadastro" element={<ProtectedRoute path="/orgaos/cadastro"><OrgaoCadastro /></ProtectedRoute>} />
               <Route path="/orgaos/consulta" element={<ProtectedRoute path="/orgaos/consulta"><OrgaosSemIBGE /></ProtectedRoute>} />
               <Route path="/orgaos/agrupamentos" element={<ProtectedRoute path="/orgaos/agrupamentos"><OrgaosAgrupamentos /></ProtectedRoute>} />
-              <Route path="/empresa/sites" element={<ProtectedRoute path="/empresa/sites"><Sites /></ProtectedRoute>} />
+              <Route path="/orgaos/sites" element={<ProtectedRoute path="/orgaos/sites"><Sites /></ProtectedRoute>} />
+              {/* Sites saiu de Empresa para Órgãos — mantém links e favoritos antigos funcionando */}
+              <Route path="/empresa/sites" element={<Navigate to="/orgaos/sites" replace />} />
               <Route path="/empresa/atividades" element={<ProtectedRoute path="/empresa/atividades"><Atividades /></ProtectedRoute>} />
               <Route path="/empresa/caixas-email" element={<ProtectedRoute path="/empresa/caixas-email"><CaixasEmail /></ProtectedRoute>} />
               <Route path="/empresa/permissoes" element={<ProtectedRoute path="/empresa/permissoes"><PermissoesAcesso /></ProtectedRoute>} />

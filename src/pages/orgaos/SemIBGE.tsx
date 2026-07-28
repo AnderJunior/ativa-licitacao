@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
@@ -8,8 +8,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
+import { filtrarOrgaos } from '@/lib/filtroOrgaos';
+import { PncpOrgaoInfo, type PncpOrgaoDados } from '@/components/orgaos/PncpOrgaoInfo';
 import { toast } from 'sonner';
-import { Loader2, Eye, Pencil } from 'lucide-react';
+import { Loader2, Eye, Pencil, Search, X } from 'lucide-react';
+
+const UF_LIST = [
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG',
+  'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
+];
 
 interface Orgao {
   id: string;
@@ -38,6 +45,28 @@ export default function OrgaosSemIBGE() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orgaoView, setOrgaoView] = useState<OrgaoCompleto | null>(null);
   const [loadingView, setLoadingView] = useState(false);
+  const [pncpView, setPncpView] = useState<PncpOrgaoDados | null>(null);
+  const [loadingPncp, setLoadingPncp] = useState(false);
+
+  // Filtros de localização (aplicados na hora, sobre a lista já carregada)
+  const [filtroNome, setFiltroNome] = useState('');
+  const [filtroCidade, setFiltroCidade] = useState('');
+  const [filtroUF, setFiltroUF] = useState('');
+  const [filtroUasg, setFiltroUasg] = useState('');
+
+  const temFiltro = Boolean(filtroNome || filtroCidade || filtroUF || filtroUasg);
+
+  const limparFiltros = () => {
+    setFiltroNome('');
+    setFiltroCidade('');
+    setFiltroUF('');
+    setFiltroUasg('');
+  };
+
+  const orgaosFiltrados = useMemo(
+    () => filtrarOrgaos(orgaos, { nome: filtroNome, cidade: filtroCidade, uf: filtroUF, uasg: filtroUasg }),
+    [orgaos, filtroNome, filtroCidade, filtroUF, filtroUasg],
+  );
 
   useEffect(() => {
     loadOrgaos();
@@ -84,6 +113,14 @@ export default function OrgaosSemIBGE() {
   const handleView = async (id: string) => {
     setLoadingView(true);
     setViewDialogOpen(true);
+
+    // Dados do PNCP vêm da associação por CNPJ, não do campo obs_pncp
+    setPncpView(null);
+    setLoadingPncp(true);
+    api.get<PncpOrgaoDados>('/api/orgaos/' + id + '/pncp')
+      .then(d => setPncpView(d))
+      .catch(() => setPncpView(null))
+      .finally(() => setLoadingPncp(false));
 
     try {
       const data = await api.get<OrgaoCompleto>('/api/orgaos/' + id);
@@ -144,10 +181,67 @@ export default function OrgaosSemIBGE() {
           <h1 className="text-xl font-bold text-[#262626]">
             Consulta de Órgãos
             {!loading && orgaos.length > 0 && (
-              <span className="text-red-600 ml-2 text-sm">({orgaos.length})</span>
+              <span className="text-red-600 ml-2 text-sm">
+                {temFiltro ? `(${orgaosFiltrados.length} de ${orgaos.length})` : `(${orgaos.length})`}
+              </span>
             )}
           </h1>
         </div>
+
+        {/* Localizar órgãos */}
+        {!loading && orgaos.length > 0 && (
+          <div className="mb-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1 flex-1 min-w-[240px]">
+                <Label className="text-xs font-medium text-[#262626]">Nome do Órgão</Label>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    value={filtroNome}
+                    onChange={(e) => setFiltroNome(e.target.value)}
+                    placeholder="Ex.: PREF. MUNIC. DE VILA VELHA"
+                    className="h-9 text-sm pl-7"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-1 min-w-[190px]">
+                <Label className="text-xs font-medium text-[#262626]">Cidade</Label>
+                <Input
+                  value={filtroCidade}
+                  onChange={(e) => setFiltroCidade(e.target.value)}
+                  placeholder="Ex.: Vila Velha"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1 w-[90px]">
+                <Label className="text-xs font-medium text-[#262626]">UF</Label>
+                <select
+                  value={filtroUF}
+                  onChange={(e) => setFiltroUF(e.target.value)}
+                  className="h-9 text-sm border border-input rounded-md px-2 bg-white focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">Todas</option>
+                  {UF_LIST.map(uf => <option key={uf} value={uf}>{uf}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1 w-[130px]">
+                <Label className="text-xs font-medium text-[#262626]">UASG</Label>
+                <Input
+                  value={filtroUasg}
+                  onChange={(e) => setFiltroUasg(e.target.value)}
+                  placeholder="NET ou MG"
+                  className="h-9 text-sm"
+                />
+              </div>
+              {temFiltro && (
+                <Button variant="ghost" size="sm" onClick={limparFiltros} className="h-9">
+                  <X className="w-4 h-4 mr-1" />
+                  Limpar
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 overflow-hidden">
           {loading ? (
@@ -157,6 +251,16 @@ export default function OrgaosSemIBGE() {
           ) : orgaos.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               Nenhum órgão cadastrado
+            </div>
+          ) : orgaosFiltrados.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              Nenhum órgão encontrado para os filtros informados.
+              <div className="mt-3">
+                <Button variant="outline" size="sm" onClick={limparFiltros}>
+                  <X className="w-4 h-4 mr-1" />
+                  Limpar filtros
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="h-full overflow-auto">
@@ -171,7 +275,7 @@ export default function OrgaosSemIBGE() {
                   </tr>
                 </thead>
                 <tbody className="[&_tr:last-child]:border-0">
-                  {orgaos.map((orgao) => (
+                  {orgaosFiltrados.map((orgao) => (
                     <tr key={orgao.id} className="border-b transition-colors hover:bg-muted/50">
                       <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">
                         {orgao.uf && orgao.cidade_nome 
@@ -233,24 +337,24 @@ export default function OrgaosSemIBGE() {
                   <Label className="text-[14px] font-normal text-[#262626]">Nome do Órgão</Label>
                   <Input
                     value={orgaoView.nome_orgao || ''}
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
                 <div className="col-span-3 space-y-0.5">
                   <Label className="text-[14px] font-normal text-[#262626]">Compras NET</Label>
                   <Input
                     value={orgaoView.compras_net || ''}
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
                 <div className="col-span-3 space-y-0.5">
                   <Label className="text-[14px] font-normal text-[#262626]">Compras MG</Label>
                   <Input
                     value={orgaoView.compras_mg || ''}
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
               </div>
@@ -265,8 +369,8 @@ export default function OrgaosSemIBGE() {
                         ? `${orgaoView.uf} - ${orgaoView.cidade_nome}`
                         : orgaoView.uf || orgaoView.cidade_nome || ''
                     }
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
                 <div className="col-span-6 space-y-0.5">
@@ -274,8 +378,8 @@ export default function OrgaosSemIBGE() {
                   <Input
                     value={orgaoView.grupo_nome || ''}
                     placeholder="Nenhum grupo selecionado"
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
               </div>
@@ -286,16 +390,16 @@ export default function OrgaosSemIBGE() {
                   <Label className="text-[14px] font-normal text-[#262626]">Endereço</Label>
                   <Input
                     value={orgaoView.endereco || ''}
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
                 <div className="col-span-5 space-y-0.5">
                   <Label className="text-[14px] font-normal text-[#262626]">Telefone</Label>
                   <Input
                     value={orgaoView.telefone || ''}
-                    className="h-9 text-[#262626]"
-                    disabled
+                    className="h-9 text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
               </div>
@@ -306,17 +410,16 @@ export default function OrgaosSemIBGE() {
                   <Label className="text-[14px] font-normal text-[#262626]">Orgão</Label>
                   <Textarea
                     value={orgaoView.observacoes || ''}
-                    className="resize-none h-[120px] text-[14px] text-[#262626] bg-gray-50"
-                    disabled
+                    className="resize-none h-[120px] text-[14px] text-[#262626] bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                    readOnly
                   />
                 </div>
                 <div className="col-span-3 space-y-0.5">
                   <Label className="text-[14px] font-normal text-[#262626]">PNCP</Label>
-                  <Textarea
-                    value={orgaoView.obs_pncp || ''}
-                    className="resize-none h-[120px] text-[14px] text-[#262626] bg-gray-50"
-                    disabled
-                  />
+                  <PncpOrgaoInfo dados={pncpView} carregando={loadingPncp} className="h-[120px]" />
+                  {orgaoView.obs_pncp?.trim() && (
+                    <p className="text-[11px] text-muted-foreground whitespace-pre-wrap pt-1">{orgaoView.obs_pncp}</p>
+                  )}
                 </div>
                 <div className="col-span-5 space-y-0.5">
                   <Label className="text-[14px] font-normal text-[#262626]">E-mails</Label>

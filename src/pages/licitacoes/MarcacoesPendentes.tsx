@@ -53,6 +53,7 @@ export default function MarcacoesPendentes() {
       const todasCadastradas = await api.get<any[]>('/api/contratacoes', {
         cadastrado: 'true',
         enviada: 'false',
+        hide_excluido: 'true',
         sort: 'dt_publicacao',
         order: 'desc',
       });

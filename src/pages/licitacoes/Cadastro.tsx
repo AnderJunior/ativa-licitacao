@@ -25,6 +25,8 @@ import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
 import { cn } from '@/lib/utils';
 import { ORDEM_ARVORE_ATIVIDADES } from '@/lib/ordemArvoreAtividades';
+import { resolverOrgaoPorConteudo, resolverOrgaoDaLicitacao, normalizarCnpj, normalizarTexto, type VinculoOrgao } from '@/lib/orgaoUasg';
+import { resolverTipoPorConteudo } from '@/lib/tipoLicitacao';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useResizable } from '@/hooks/use-resizable';
@@ -37,6 +39,7 @@ interface Contratacao {
   uf: string | null;
   municipio: string | null;
   orgao_pncp: string | null;
+  cnpj?: string | null; // CNPJ da unidade — chave da associação com o órgão cadastrado
   modalidade: string | null;
   descricao_modalidade: string | null;
   num_licitacao: string | null;
@@ -99,6 +102,8 @@ export default function LicitacaoCadastro() {
   const [saving, setSaving] = useState(false);
   const [tipos, setTipos] = useState<TipoLicitacao[]>([]);
   const [orgaos, setOrgaos] = useState<Orgao[]>([]);
+  // Associações CNPJ → órgão cadastrado (definidas em Consulta > Unidades > Associar Órgão)
+  const [vinculosOrgaos, setVinculosOrgaos] = useState<Record<string, VinculoOrgao>>({});
   const [ramos, setRamos] = useState<RamoAtividade[]>([]);
   const [selectedRamos, setSelectedRamos] = useState<string[]>([]);
   const [linksPopupOpen, setLinksPopupOpen] = useState(false);
@@ -118,6 +123,7 @@ export default function LicitacaoCadastro() {
   const [conteudoIgnorado, setConteudoIgnorado] = useState<string>(''); // Rastreia conteúdo que o usuário fechou o popup
   const [dataPopupOpen, setDataPopupOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [limparDialogOpen, setLimparDialogOpen] = useState(false);
   const [duplicidadeDialogOpen, setDuplicidadeDialogOpen] = useState(false);
   // Gatilho para reexecutar a verificação de duplicidade sob demanda (ex.: ao tabular do campo Número)
   const [dupCheckTrigger, setDupCheckTrigger] = useState(0);
@@ -214,6 +220,10 @@ export default function LicitacaoCadastro() {
 
   // Map para rastrear últimos tempos de seleção e evitar múltiplas chamadas
   const lastSelectTimeMap = useRef<Map<string, number>>(new Map());
+  // Conteúdo/checks já processados pelo preenchimento automático — impede que o efeito
+  // reprocesse e sobrescreva o que o usuário escolheu manualmente depois.
+  const ultimaChaveAutoPreenchimentoRef = useRef<string | null>(null);
+
   // Evita toasts duplicados de "órgão não encontrado" (validação e auto-fill podem disparar juntos)
   const lastOrgaoNaoEncontradoToastRef = useRef<number>(0);
   const ORGAO_TOAST_DEBOUNCE_MS = 4000;
@@ -248,6 +258,7 @@ export default function LicitacaoCadastro() {
   useEffect(() => {
     loadTipos();
     loadOrgaos();
+    loadVinculosOrgaos();
     loadRamos();
     if (contratacaoId) {
       loadContratacao(contratacaoId);
@@ -422,36 +433,25 @@ export default function LicitacaoCadastro() {
     }
     
     if (orgaos.length > 0 && formData.id && formData.orgao_pncp) {
-      const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
-      // Verifica se o orgão existe na lista de orgãos cadastrados
-      const orgaoEncontrado = orgaos.find(o => 
-        o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp
+      const resultado = resolverOrgaoDaLicitacao(
+        { orgao_pncp: formData.orgao_pncp, cnpj: formData.cnpj },
+        orgaos,
+        vinculosOrgaos,
       );
-      
-      if (!orgaoEncontrado) {
-        // Tenta buscar por nome parcial (com normalização para acentos: MUNICIPIO ≈ MUNICÍPIO)
-        const formNorm = normalizarOrgao(formData.orgao_pncp);
-        const orgaoPorNome = orgaos.find(o => {
-          const nomeNorm = normalizarOrgao(o.nome_orgao || '');
-          return nomeNorm.includes(formNorm) || formNorm.includes(nomeNorm);
-        });
-        
-        if (orgaoPorNome) {
-          setFormData(prev => ({
-            ...prev,
-            orgao_pncp: orgaoPorNome.nome_orgao,
-          }));
-        } else {
-          // Se não encontrou, limpa para o usuário selecionar manualmente
-          setFormData(prev => ({
-            ...prev,
-            orgao_pncp: '',
-          }));
-          showToastOrgaoNaoEncontrado(`Órgão "${formData.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
+
+      if (resultado.status === 'encontrado') {
+        if (resultado.orgao.nome_orgao !== formData.orgao_pncp) {
+          setFormData(prev => ({ ...prev, orgao_pncp: resultado.orgao.nome_orgao }));
         }
+      } else if (resultado.status === 'ambiguo') {
+        setFormData(prev => ({ ...prev, orgao_pncp: resultado.candidatos[0].nome_orgao }));
+      } else {
+        // Não há associação nem nome compatível: limpa para o usuário escolher
+        setFormData(prev => ({ ...prev, orgao_pncp: '' }));
+        showToastOrgaoNaoEncontrado(`Órgão "${formData.orgao_pncp}" não encontrado. Associe a unidade em Consulta > Unidades, ou selecione um órgão cadastrado.`);
       }
     }
-  }, [orgaos.length, formData.id, formData.orgao_pncp, autoPreencherUASG, contratacaoId, searchParams]);
+  }, [orgaos.length, formData.id, formData.orgao_pncp, formData.cnpj, vinculosOrgaos, autoPreencherUASG, contratacaoId, searchParams]);
 
   // Persiste os checks UASG, DATA e TIPO no localStorage para não desmarcar ao salvar, novo ou limpar
   useEffect(() => {
@@ -469,70 +469,32 @@ export default function LicitacaoCadastro() {
     if (autoPreencherUASG && orgaos.length === 0) return; // Aguarda órgãos carregarem para buscar por UASG/nome
     if (autoPreencherTIPO && tipos.length === 0) return;  // Aguarda tipos carregarem para buscar modalidade
 
+    // Só preenche uma vez por conteúdo/combinação de checks. Sem isto, o efeito
+    // reagiria à própria alteração de Órgão/Data/Tipo e desfaria a escolha manual
+    // do usuário (era o caso da modalidade voltando sozinha para "AVISO").
+    const chaveAutoPreenchimento = `${conteudo}~~${autoPreencherUASG}|${autoPreencherDATA}|${autoPreencherTIPO}`;
+    if (ultimaChaveAutoPreenchimentoRef.current === chaveAutoPreenchimento) return;
+
     const timerId = setTimeout(() => {
+      ultimaChaveAutoPreenchimentoRef.current = chaveAutoPreenchimento;
       const updates: Partial<Contratacao> = {};
-      const linhas = conteudo.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-      // UASG → Órgão: prioriza código UASG vinculado ao perfil do órgão, senão busca por nome
+      // UASG → Órgão: resolve pelo código UASG (Compras NET/MG ou embutido no nome) e pelo nome
       if (autoPreencherUASG) {
-        let orgaoEncontrado: string | null = null;
+        const resultado = resolverOrgaoPorConteudo(conteudo, orgaos);
 
-        // Coleta códigos UASG do texto (prioridade para buscas explícitas por código)
-        const codigosUASG: string[] = [];
-        const patternsUASG = [
-          /(?:UASG|Código\s*UASG|uasg)[:\s]*(\d{6})/gi,
-          /(?:Órgão|Orgao|orgao):\s*(\d{6})(?:\s|$|\n)/gi,
-          /\b(\d{6})\b/g,
-        ];
-        for (const pattern of patternsUASG) {
-          let m;
-          const re = new RegExp(pattern.source, pattern.flags);
-          while ((m = re.exec(conteudo)) !== null) {
-            if (m[1] && !codigosUASG.includes(m[1])) codigosUASG.push(m[1]);
+        if (resultado.status === 'encontrado') {
+          if (resultado.orgao.nome_orgao !== formData.orgao_pncp) {
+            updates.orgao_pncp = resultado.orgao.nome_orgao;
           }
-        }
-
-        // Primeiro tenta buscar pelo código UASG vinculado ao perfil (compras_net, compras_mg)
-        for (const cod of codigosUASG) {
-          const orgao = orgaos.find(o => o.compras_net === cod || o.compras_mg === cod);
-          if (orgao) {
-            orgaoEncontrado = orgao.nome_orgao;
-            break;
-          }
-        }
-
-        // Se não encontrou por código, tenta por nome em "Órgão: NOME"
-        if (!orgaoEncontrado) {
-          const matchOrgao = conteudo.match(/(?:Órgão|Orgao|orgao):\s*(.+?)(?:\n|$)/i);
-          if (matchOrgao) {
-            const nomeOuCodigo = matchOrgao[1].trim();
-            if (nomeOuCodigo.replace(/\D/g, '').length !== 6) {
-              const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
-              const nomeNorm = normalizarOrgao(nomeOuCodigo);
-              const orgaosEncontrados = orgaos.filter(o => {
-                const nomeOrgaoNorm = normalizarOrgao(o.nome_orgao || '');
-                return nomeOrgaoNorm.includes(nomeNorm) || nomeNorm.includes(nomeOrgaoNorm);
-              });
-              if (orgaosEncontrados.length > 1) {
-                // Múltiplos órgãos parecidos: abre popup para o usuário escolher
-                setOrgaosParaSelecao(orgaosEncontrados);
-                setBuscarOrgaoPopupOpen(true);
-              } else if (orgaosEncontrados.length === 1) {
-                orgaoEncontrado = orgaosEncontrados[0].nome_orgao;
-              } else {
-                showToastOrgaoNaoEncontrado('Nenhum órgão encontrado com o nome informado.');
-              }
-            } else if (codigosUASG.length > 0) {
-              // Órgão com 6 dígitos = código UASG, já tentou buscar e não encontrou
-              showToastOrgaoNaoEncontrado('Nenhum órgão encontrado com o código UASG informado.');
-            }
-          } else if (codigosUASG.length > 0) {
-            showToastOrgaoNaoEncontrado('Nenhum órgão encontrado com o código UASG informado.');
-          }
-        }
-
-        if (orgaoEncontrado && orgaoEncontrado !== formData.orgao_pncp) {
-          updates.orgao_pncp = orgaoEncontrado;
+        } else if (resultado.status === 'ambiguo') {
+          // Mais de um órgão igualmente parecido: abre popup para o usuário escolher
+          setOrgaosParaSelecao(resultado.candidatos);
+          setBuscarOrgaoPopupOpen(true);
+        } else if (resultado.termo) {
+          showToastOrgaoNaoEncontrado(`Nenhum órgão cadastrado corresponde a "${resultado.termo}".`);
+        } else if (resultado.codigos.length > 0) {
+          showToastOrgaoNaoEncontrado(`Nenhum órgão cadastrado com o código UASG ${resultado.codigos[0]}.`);
         }
       }
 
@@ -551,63 +513,13 @@ export default function LicitacaoCadastro() {
         }
       }
 
-      // TIPO → Tipo da licitação: extrai "Modalidade de Compra: X" e prioriza o tipo que melhor corresponde ao texto
+      // TIPO -> Modalidade: vence a modalidade mais especifica encontrada em qualquer
+      // parte do texto; cabecalhos genericos (AVISO / LICITACAO) so entram como ultimo recurso.
       if (autoPreencherTIPO) {
-        let tipoEncontrado: TipoLicitacao | null = null;
-        const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
-        const matchModalidade = conteudo.match(/(?:Modalidade de Compra|Modalidade):\s*(.+?)(?:\n|$)/i);
-        const termoBusca = matchModalidade ? matchModalidade[1].trim() : null;
-        if (termoBusca) {
-          const termoNorm = normalizar(termoBusca).replace(/\s*-\s*/g, ' ');
-          const palavrasTermo = termoNorm.split(/\s+/).filter(p => p.length > 2 && !/^[eodap]$/i.test(p));
-          const palavrasDescNorm = (desc: string) => normalizar(desc).split(/\s+/).filter(Boolean);
-          const candidatos = tipos
-            .map(t => {
-              const sigla = (t.sigla || '').toLowerCase().trim();
-              const descNorm = normalizar(t.descricao || '');
-              const palavrasDesc = palavrasDescNorm(t.descricao || '');
-              const termoIncluiSigla = sigla.length > 2 ? termoNorm.includes(sigla) : false;
-              const siglaMatchShort = sigla.length <= 2 && termoNorm.includes(sigla);
-              const descContemTermo = descNorm.includes(termoNorm) || termoNorm.includes(descNorm);
-              const descContemTermoPalavras = palavrasTermo.some(p => descNorm.includes(p));
-              if (!termoIncluiSigla && !sigla.includes(termoNorm) && !descContemTermo && !descContemTermoPalavras) return null;
-              if (siglaMatchShort && !descContemTermoPalavras) return null;
-              // Prioriza match exato/início: descrição que começa com o termo é a modalidade principal
-              const descricaoComecaComTermo = descNorm.startsWith(termoNorm) || termoNorm.startsWith(descNorm);
-              const matchComoPalavrasInteiras = palavrasTermo.filter(p =>
-                palavrasDesc.some(pd => pd === p || pd.startsWith(p) && pd.length <= p.length + 2)
-              ).length;
-              const palavrasMatch = palavrasTermo.filter(p => descNorm.includes(p)).length;
-              const bonusEspecifico = descricaoComecaComTermo ? 100 : (matchComoPalavrasInteiras === palavrasTermo.length ? 50 : 0);
-              const score = bonusEspecifico + palavrasMatch;
-              return { tipo: t, score, descLen: descNorm.length };
-            })
-            .filter((c): c is { tipo: TipoLicitacao; score: number; descLen: number } => c !== null && c.score > 0);
-          tipoEncontrado = candidatos.length > 0
-            ? candidatos.sort((a, b) => b.score - a.score || a.descLen - b.descLen)[0].tipo
-            : null;
-        }
-        if (!tipoEncontrado) {
-          for (const linha of linhas) {
-            const linhaNorm = normalizar(linha);
-            const candidatos = tipos
-              .map(t => {
-                const descNorm = normalizar(t.descricao || '');
-                if (!descNorm || !linhaNorm.includes(descNorm)) return null;
-                const palavrasDesc = descNorm.split(/\s+/).filter(p => p.length > 2);
-                const score = palavrasDesc.filter(p => linhaNorm.includes(p)).length;
-                return score > 0 ? { tipo: t, score } : null;
-              })
-              .filter((c): c is { tipo: TipoLicitacao; score: number } => c !== null);
-            tipoEncontrado = candidatos.length > 0
-              ? candidatos.sort((a, b) => b.score - a.score)[0].tipo
-              : null;
-            if (tipoEncontrado) break;
-          }
-        }
-        if (tipoEncontrado && tipoEncontrado.id !== formData.modalidade) {
-          updates.modalidade = tipoEncontrado.id;
-          updates.descricao_modalidade = tipoEncontrado.id;
+        const resultado = resolverTipoPorConteudo(conteudo, tipos);
+        if (resultado.status === 'encontrado' && resultado.tipo.id !== formData.modalidade) {
+          updates.modalidade = resultado.tipo.id;
+          updates.descricao_modalidade = resultado.tipo.id;
         }
       }
 
@@ -656,6 +568,7 @@ export default function LicitacaoCadastro() {
         licitacoesCandidatas = await api.get<any[]>('/api/contratacoes', {
           descricao_modalidade: tipoId,
           ano_compra: String(anoCompra),
+          hide_excluido: 'true', // Licitação excluída não deve acusar duplicidade
           select: 'id,orgao_pncp,num_ativa,created_at,titulo,municipio,uf,unidade,un_cod,modalidade,num_licitacao,conteudo,valor_estimado,dt_encerramento_proposta,dt_atualizacao',
         });
       } catch (err) {
@@ -1023,6 +936,20 @@ export default function LicitacaoCadastro() {
     }
   };
 
+  const loadVinculosOrgaos = async () => {
+    try {
+      const data = await api.get<{ cnpj: string | null; orgao_id: string | null; orgao_nome: string | null }[]>('/api/orgaos-vinculados');
+      const mapa: Record<string, VinculoOrgao> = {};
+      (data || []).forEach(v => {
+        const cnpj = normalizarCnpj(v.cnpj);
+        if (cnpj) mapa[cnpj] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome };
+      });
+      setVinculosOrgaos(mapa);
+    } catch (err) {
+      console.error('Erro ao carregar órgãos vinculados:', err);
+    }
+  };
+
   const loadRamos = async () => {
     try {
       const data = await api.get<RamoAtividade[]>('/api/ramos-atividade');
@@ -1251,31 +1178,17 @@ export default function LicitacaoCadastro() {
       // Se não existir, a identificação automática será feita pelo useEffect quando os tipos forem carregados
       const tipoId = data.descricao_modalidade || null;
 
-      // Valida e ajusta o orgão para garantir que existe nos orgãos cadastrados
+      // Resolve o órgão cadastrado: a associação por CNPJ tem prioridade sobre o nome do PNCP
       let orgaoValido = data.orgao_pncp || '';
       if (orgaoValido && orgaos.length > 0) {
-        const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
-        // Verifica se o orgão existe na lista de orgãos cadastrados
-        const orgaoEncontrado = orgaos.find(o => 
-          o.id === orgaoValido || o.nome_orgao === orgaoValido
-        );
-        
-        // Se não encontrou, tenta buscar por nome parcial (com normalização para acentos)
-        if (!orgaoEncontrado) {
-          const orgaoNorm = normalizarOrgao(orgaoValido);
-          const orgaoPorNome = orgaos.find(o => {
-            const nomeNorm = normalizarOrgao(o.nome_orgao || '');
-            return nomeNorm.includes(orgaoNorm) || orgaoNorm.includes(nomeNorm);
-          });
-          if (orgaoPorNome) {
-            orgaoValido = orgaoPorNome.nome_orgao;
-          } else {
-            // Se não encontrou, limpa para o usuário selecionar manualmente
-            orgaoValido = '';
-            showToastOrgaoNaoEncontrado(`Órgão "${data.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
-          }
+        const resultado = resolverOrgaoDaLicitacao(data, orgaos, vinculosOrgaos);
+        if (resultado.status === 'encontrado') {
+          orgaoValido = resultado.orgao.nome_orgao;
+        } else if (resultado.status === 'ambiguo') {
+          orgaoValido = resultado.candidatos[0].nome_orgao;
         } else {
-          orgaoValido = orgaoEncontrado.nome_orgao;
+          orgaoValido = '';
+          showToastOrgaoNaoEncontrado(`Órgão "${data.orgao_pncp}" não encontrado. Associe a unidade em Consulta > Unidades, ou selecione um órgão cadastrado.`);
         }
       }
 
@@ -1398,6 +1311,7 @@ export default function LicitacaoCadastro() {
       const params: Record<string, string> = {
         uf: ufSelecionada,
         cadastrado: 'false',
+        hide_excluido: 'true', // Não navega para licitação excluída
         sort: 'created_at',
         order: 'asc',
         limit: '1',
@@ -1473,31 +1387,17 @@ export default function LicitacaoCadastro() {
     // Usa o descricao_modalidade (ID do tipo) se existir
     const tipoId = licitacao.descricao_modalidade || null;
 
-    // Valida e ajusta o orgão para garantir que existe nos orgãos cadastrados
+    // Resolve o órgão cadastrado: a associação por CNPJ tem prioridade sobre o nome do PNCP
     let orgaoValido = licitacao.orgao_pncp || '';
     if (orgaoValido && orgaos.length > 0) {
-      const normalizarOrgao = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
-      // Verifica se o orgão existe na lista de orgãos cadastrados
-      const orgaoEncontrado = orgaos.find(o => 
-        o.id === orgaoValido || o.nome_orgao === orgaoValido
-      );
-      
-      // Se não encontrou, tenta buscar por nome parcial (com normalização para acentos)
-      if (!orgaoEncontrado) {
-        const orgaoNorm = normalizarOrgao(orgaoValido);
-        const orgaoPorNome = orgaos.find(o => {
-          const nomeNorm = normalizarOrgao(o.nome_orgao || '');
-          return nomeNorm.includes(orgaoNorm) || orgaoNorm.includes(nomeNorm);
-        });
-        if (orgaoPorNome) {
-          orgaoValido = orgaoPorNome.nome_orgao;
-        } else {
-          // Se não encontrou, limpa para o usuário selecionar manualmente
-          orgaoValido = '';
-          showToastOrgaoNaoEncontrado(`Órgão "${licitacao.orgao_pncp}" não encontrado. Por favor, selecione um órgão cadastrado.`);
-        }
+      const resultado = resolverOrgaoDaLicitacao(licitacao, orgaos, vinculosOrgaos);
+      if (resultado.status === 'encontrado') {
+        orgaoValido = resultado.orgao.nome_orgao;
+      } else if (resultado.status === 'ambiguo') {
+        orgaoValido = resultado.candidatos[0].nome_orgao;
       } else {
-        orgaoValido = orgaoEncontrado.nome_orgao;
+        orgaoValido = '';
+        showToastOrgaoNaoEncontrado(`Órgão "${licitacao.orgao_pncp}" não encontrado. Associe a unidade em Consulta > Unidades, ou selecione um órgão cadastrado.`);
       }
     }
 
@@ -1915,6 +1815,7 @@ export default function LicitacaoCadastro() {
     }
 
     // Limpa todos os campos do formulário (mantém PNCP/UF selecionado)
+    ultimaChaveAutoPreenchimentoRef.current = null; // Libera o auto-preenchimento para o próximo conteúdo
     setFormData({
       num_ativa: '',
       cadastrado_por: '',
@@ -2003,6 +1904,7 @@ export default function LicitacaoCadastro() {
 
   const handleNovo = () => {
     // Limpa todos os campos do formulário para iniciar um novo cadastro (mantém PNCP/UF selecionado)
+    ultimaChaveAutoPreenchimentoRef.current = null; // Libera o auto-preenchimento para o próximo conteúdo
     setFormData({
       num_ativa: '',
       cadastrado_por: '',
@@ -2046,6 +1948,7 @@ export default function LicitacaoCadastro() {
       const results = await api.get<{ orgao_pncp: string | null }[]>('/api/contratacoes', {
         cadastrado: 'true',
         orgao_pncp_not_null: 'true',
+        hide_excluido: 'true',
         sort: 'updated_at',
         order: 'desc',
         limit: '1',
@@ -2062,6 +1965,7 @@ export default function LicitacaoCadastro() {
         const fallbackResults = await api.get<{ orgao_pncp: string | null }[]>('/api/contratacoes', {
           cadastrado: 'true',
           orgao_pncp_not_null: 'true',
+          hide_excluido: 'true',
           sort: 'dt_alterado_ativa',
           order: 'desc',
           limit: '1',
@@ -2078,6 +1982,7 @@ export default function LicitacaoCadastro() {
           const createdResults = await api.get<{ orgao_pncp: string | null }[]>('/api/contratacoes', {
             cadastrado: 'true',
             orgao_pncp_not_null: 'true',
+            hide_excluido: 'true',
             sort: 'created_at',
             order: 'desc',
             limit: '1',
@@ -2468,10 +2373,10 @@ export default function LicitacaoCadastro() {
               >
                 <ChevronRight className="w-4 h-4" />
               </Button>
-              <Button 
-                variant="destructive" 
-                size="icon" 
-                onClick={handleLimpar}
+              <Button
+                variant="destructive"
+                size="icon"
+                onClick={() => setLimparDialogOpen(true)}
                 className="rounded-full w-9 h-9 bg-red-500 hover:bg-red-600"
                 title="Limpar campos"
               >
@@ -2495,6 +2400,7 @@ export default function LicitacaoCadastro() {
                       const params: Record<string, string> = {
                         cadastrado: 'true',
                         orgao_pncp: orgaoNome,
+                        hide_excluido: 'true',
                         sort: 'num_ativa',
                         order: 'desc',
                         include_tipo: 'true',
@@ -2864,10 +2770,8 @@ export default function LicitacaoCadastro() {
                             {tipos
                               .filter((tipo) => {
                                 if (!tipoSearchTerm) return false;
-                                // Filtra apenas os que começam com o termo de busca (case insensitive)
-                                const searchLower = tipoSearchTerm.toLowerCase();
-                                const siglaLower = tipo.sigla?.toLowerCase() || '';
-                                return siglaLower.startsWith(searchLower);
+                                // Filtra os que começam com o termo, ignorando caixa e acento
+                                return normalizarTexto(tipo.sigla).startsWith(normalizarTexto(tipoSearchTerm));
                               })
                               .slice(0, 1) // Mostra apenas 1 item
                               .map((tipo) => {
@@ -3156,9 +3060,8 @@ export default function LicitacaoCadastro() {
                           {orgaos
                             .filter((orgao) => {
                               if (!orgaoSearchTerm) return false;
-                              const searchLower = orgaoSearchTerm.toLowerCase();
-                              const nomeLower = orgao.nome_orgao?.toLowerCase() || '';
-                              return nomeLower.includes(searchLower);
+                              // Ignora acento: "piuma" acha "PIÚMA" e vice-versa
+                              return normalizarTexto(orgao.nome_orgao).includes(normalizarTexto(orgaoSearchTerm));
                             })
                             .slice(0, 1) // Mostra apenas 1 item
                             .map((orgao) => {
@@ -3590,6 +3493,31 @@ export default function LicitacaoCadastro() {
         }}
         termoInicial={termoInicialTipo}
       />
+
+      {/* Dialog de confirmação do X vermelho (limpar campos) */}
+      <AlertDialog open={limparDialogOpen} onOpenChange={setLimparDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Limpar campos</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja limpar todos os campos? Os dados preenchidos que ainda não
+              foram salvos serão perdidos. A licitação não é excluída do sistema.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setLimparDialogOpen(false);
+                handleLimpar();
+              }}
+              className="bg-red-500 hover:bg-red-600 text-white"
+            >
+              Limpar campos
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Dialog de confirmação de exclusão */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

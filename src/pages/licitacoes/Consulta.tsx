@@ -51,6 +51,28 @@ interface Contratacao {
   } | null;
 }
 
+/** Uma linha da visualização "Enviadas por Cliente": uma licitação dentro de um relatório. */
+interface LinhaEnviadaCliente {
+  id: string;
+  contratacao_id: string;
+  num_relatorio: number;
+  dt_envio: string | null;
+  cliente_id: string;
+  cliente_nome: string | null;
+  num_ativa: string | null;
+  contratacao_created_at?: string | null;
+  uf: string | null;
+  titulo: string | null;
+  num_licitacao: string | null;
+  ano_compra: string | null;
+  orgao_pncp: string | null;
+  dt_publicacao: string | null;
+  dt_atualizacao: string | null;
+  modalidade: string | null;
+  descricao_modalidade: string | null;
+  tipo_licitacao?: { id: string; sigla: string | null; descricao: string | null } | null;
+}
+
 const UF_LIST = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG',
   'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
@@ -265,6 +287,15 @@ export default function LicitacaoConsulta() {
   const [selectedEnviada, setSelectedEnviada] = useState<Contratacao | null>(null);
   const [selecaoMultiplaEnviadas, setSelecaoMultiplaEnviadas] = useState(false);
   const [selectedEnviadasIds, setSelectedEnviadasIds] = useState<Set<string>>(new Set());
+  // Visualização da aba "Licitações Enviadas": por licitação (padrão) ou por cliente
+  const [enviadasView, setEnviadasView] = useState<'licitacao' | 'cliente'>('licitacao');
+  const [enviadasPorCliente, setEnviadasPorCliente] = useState<LinhaEnviadaCliente[]>([]);
+  const [clientesLista, setClientesLista] = useState<{ id: string; nome: string }[]>([]);
+  const [filtroEnvNumRelatorio, setFiltroEnvNumRelatorio] = useState('');
+  const [filtroEnvClienteId, setFiltroEnvClienteId] = useState('');
+  const [filtroEnvFiltrarPor, setFiltroEnvFiltrarPor] = useState<'dt_envio' | 'dt_alteracao'>('dt_envio');
+  const [filtroEnvQtdMax, setFiltroEnvQtdMax] = useState('150');
+
   const [filtroEnviadasOpen, setFiltroEnviadasOpen] = useState(false);
   const [filtroEnviadasNControle, setFiltroEnviadasNControle] = useState('');
   const [filtroEnviadasDataInicio, setFiltroEnviadasDataInicio] = useState('');
@@ -333,6 +364,44 @@ export default function LicitacaoConsulta() {
       setLoadingConferirRamos(false);
     }
   };
+
+  // Carrega a visualização "Enviadas por Cliente" — uma linha por licitação enviada.
+  const loadEnviadasPorCliente = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params: Record<string, string> = { filtrar_por: filtroEnvFiltrarPor };
+      if (filtroEnvNumRelatorio) params.num_relatorio = filtroEnvNumRelatorio;
+      if (filtroEnvClienteId) params.cliente_id = filtroEnvClienteId;
+      if (filtroEnviadasNControle) params.num_ativa = filtroEnviadasNControle;
+      if (filtroEnviadasDataInicio) params.dt_inicio = filtroEnviadasDataInicio;
+      if (filtroEnviadasDataFim) params.dt_fim = filtroEnviadasDataFim;
+      if (filtroEnviadasUF) params.uf = filtroEnviadasUF;
+      if (filtroEnviadasTipo) params.descricao_modalidade = filtroEnviadasTipo;
+      if (filtroEnviadasOrgao) params.orgao_pncp = filtroEnviadasOrgao;
+      if (filtroEnvQtdMax) params.limit = filtroEnvQtdMax;
+
+      const data = await api.get<LinhaEnviadaCliente[]>('/api/relatorios-envio', params);
+      setEnviadasPorCliente(data || []);
+      setContratacoes([]);
+      setTotalRecords((data || []).length);
+      setTotalPages(1);
+      setCurrentPage(1);
+    } catch (err: any) {
+      toast.error('Erro ao carregar enviadas por cliente: ' + (err?.message || err));
+      setEnviadasPorCliente([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [filtroEnvFiltrarPor, filtroEnvNumRelatorio, filtroEnvClienteId, filtroEnvQtdMax,
+      filtroEnviadasNControle, filtroEnviadasDataInicio, filtroEnviadasDataFim,
+      filtroEnviadasUF, filtroEnviadasTipo, filtroEnviadasOrgao]);
+
+  const loadClientesLista = useCallback(async () => {
+    try {
+      const data = await api.get<{ id: string; nome: string }[]>('/api/clientes');
+      setClientesLista((data || []).map(c => ({ id: c.id, nome: c.nome })));
+    } catch { /* silencia */ }
+  }, []);
 
   const loadVinculos = useCallback(async () => {
     try {
@@ -439,8 +508,14 @@ export default function LicitacaoConsulta() {
   // travava o navegador ao ir do Resumido — que carrega tudo — para o Detalhado).
   useEffect(() => {
     setCurrentPage(1);
+    // A visualização "Enviadas por Cliente" tem origem própria (relatórios de envio)
+    if (activeTab === 'enviadas' && enviadasView === 'cliente') {
+      loadClientesLista();
+      loadEnviadasPorCliente();
+      return;
+    }
     loadContratacoes(1);
-  }, [activeTab, filtroUFConferir, filtroLayout]);
+  }, [activeTab, filtroUFConferir, filtroLayout, enviadasView]);
 
   // Ordenação: layouts paginados no servidor (detalhado) recarregam;
   // layouts client-side (resumido/unidades/modalidade) reordenam via useMemo,
@@ -662,14 +737,18 @@ export default function LicitacaoConsulta() {
         }
 
         // Busca contratações da aba conferir
+        // Ordem de cadastro, da mais recente para a mais antiga. dt_vinculo_ativa
+        // é gravado quando a licitação é cadastrada e preservado nos salvamentos
+        // seguintes — ao contrário de updated_at, que muda a cada reedição.
         const conferirParams: Record<string, string> = {
           cadastrado: 'true',
           enviada: 'false',
           hide_excluido: 'true',
           ids: idsComMarcacoes.join(','),
           include_tipo: 'true',
-          sort: 'dt_publicacao',
+          sort: 'dt_vinculo_ativa',
           order: 'desc',
+          nulls: 'last',
         };
         const conferirRaw = await api.get<any[]>('/api/contratacoes', conferirParams);
 
@@ -837,6 +916,10 @@ export default function LicitacaoConsulta() {
 
   const applyFilters = () => {
     setCurrentPage(1);
+    if (activeTab === 'enviadas' && enviadasView === 'cliente') {
+      loadEnviadasPorCliente();
+      return;
+    }
     loadContratacoes(1);
   };
 
@@ -1229,8 +1312,33 @@ export default function LicitacaoConsulta() {
             )}
             {activeTab === 'enviadas' && (
               <div className="flex items-center gap-2">
+                {/* Alterna entre a lista por licitação e a lista por cliente */}
+                <div className="flex items-center rounded-md border border-border overflow-hidden mr-1">
+                  {([
+                    { valor: 'licitacao', rotulo: 'Por Licitação' },
+                    { valor: 'cliente', rotulo: 'Por Cliente' },
+                  ] as const).map(opcao => (
+                    <button
+                      key={opcao.valor}
+                      type="button"
+                      onClick={() => {
+                        setEnviadasView(opcao.valor);
+                        setSelectedEnviada(null);
+                      }}
+                      className={cn(
+                        'px-3 py-1.5 text-xs font-medium transition-colors',
+                        enviadasView === opcao.valor
+                          ? 'bg-[#02572E] text-white'
+                          : 'bg-white text-[#1A1A1A] hover:bg-muted',
+                      )}
+                    >
+                      {opcao.rotulo}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Botões para seleção simples */}
-                {selectedEnviada && (
+                {enviadasView === 'licitacao' && selectedEnviada && (
                   <>
                     <Button
                       size="sm"
@@ -1381,6 +1489,53 @@ export default function LicitacaoConsulta() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Linha 3 — só na visualização Por Cliente */}
+                      {enviadasView === 'cliente' && (
+                        <div className="grid grid-cols-[140px_1fr_180px_130px] gap-3 items-end pt-2 border-t border-border">
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs font-medium">N. Relatório</Label>
+                            <Input
+                              inputMode="numeric"
+                              value={filtroEnvNumRelatorio}
+                              onChange={(e) => setFiltroEnvNumRelatorio(e.target.value.replace(/\D/g, ''))}
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs font-medium">Cliente</Label>
+                            <select
+                              value={filtroEnvClienteId}
+                              onChange={(e) => setFiltroEnvClienteId(e.target.value)}
+                              className="h-8 text-sm border border-border rounded-md px-2 bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                            >
+                              <option value="">Todos os clientes</option>
+                              {clientesLista.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs font-medium">Filtrar período por</Label>
+                            <select
+                              value={filtroEnvFiltrarPor}
+                              onChange={(e) => setFiltroEnvFiltrarPor(e.target.value as 'dt_envio' | 'dt_alteracao')}
+                              className="h-8 text-sm border border-border rounded-md px-2 bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                            >
+                              <option value="dt_envio">Dt. Envio</option>
+                              <option value="dt_alteracao">Dt. Alteração</option>
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label className="text-xs font-medium">Qtd Máx Registros</Label>
+                            <Input
+                              inputMode="numeric"
+                              value={filtroEnvQtdMax}
+                              onChange={(e) => setFiltroEnvQtdMax(e.target.value.replace(/\D/g, ''))}
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                        </div>
+                      )}
+
                       {/* Botões */}
                       <div className="flex gap-2 pt-2 border-t border-border">
                         <Button size="sm" onClick={() => { applyFilters(); setFiltroEnviadasOpen(false); }}>
@@ -1394,6 +1549,10 @@ export default function LicitacaoConsulta() {
                           setFiltroEnviadasTipo('');
                           setFiltroEnviadasTipoLabel('');
                           setFiltroEnviadasOrgao('');
+                          setFiltroEnvNumRelatorio('');
+                          setFiltroEnvClienteId('');
+                          setFiltroEnvFiltrarPor('dt_envio');
+                          setFiltroEnvQtdMax('150');
                         }}>
                           <X className="w-4 h-4 mr-1" />
                           Limpar
@@ -2069,6 +2228,47 @@ export default function LicitacaoConsulta() {
                 </table>
               )}
             </div>
+          ) : activeTab === 'enviadas' && enviadasView === 'cliente' ? (
+            <table className="w-full caption-bottom text-sm border-collapse">
+              <thead className="sticky top-0 bg-white z-20 shadow-sm">
+                <tr className="border-b bg-white">
+                  {['N. Controle Ativa', 'UF', 'Tipo', 'Edital', 'Órgão', 'Dt. Licitação', 'Dt. Envio', 'N. Relatório', 'Cliente'].map(col => (
+                    <th key={col} className="h-10 px-3 text-left align-middle text-xs font-bold text-[#1A1A1A] bg-white whitespace-nowrap">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {enviadasPorCliente.length === 0 && !loading ? (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      Nenhuma licitação enviada encontrada para os filtros informados.
+                    </td>
+                  </tr>
+                ) : enviadasPorCliente.map((l) => (
+                  <tr
+                    key={l.id}
+                    className="border-b transition-colors cursor-pointer hover:bg-muted/50"
+                    onDoubleClick={() => navigate(`/licitacoes/cadastro?id=${l.contratacao_id}`)}
+                    title="Dê um duplo clique para abrir"
+                  >
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatarNumAtiva(l.num_ativa, l.contratacao_created_at || undefined)}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{l.uf || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{l.tipo_licitacao?.descricao || l.modalidade || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">
+                      {(() => {
+                        const titulo = (l.titulo || '').replace(/edital\s+n[ºo°]?\s*/i, '').trim();
+                        return titulo && l.ano_compra ? `${titulo}/${l.ano_compra}` : titulo || l.num_licitacao || '-';
+                      })()}
+                    </td>
+                    <td className="px-3 py-1.5 text-sm max-w-[220px] truncate" title={l.orgao_pncp || ''}>{l.orgao_pncp || '-'}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(l.dt_publicacao)}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(l.dt_envio)}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{l.num_relatorio}</td>
+                    <td className="px-3 py-1.5 text-sm max-w-[220px] truncate" title={l.cliente_nome || ''}>{l.cliente_nome || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : activeTab === 'enviadas' ? (
             <table className="w-full caption-bottom text-sm border-collapse">
               <thead className="sticky top-0 bg-white z-20 shadow-sm">

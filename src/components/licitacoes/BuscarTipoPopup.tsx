@@ -69,13 +69,14 @@ export function BuscarTipoPopup({
 
       // Apply client-side filters for more precise matching
       let filtered = data || [];
+      // Sem acento nos dois sentidos: "convocacao" acha "CONVOCAÇÃO"
       if (filtroSigla.trim()) {
-        const f = filtroSigla.trim().replace(/%/g, '').toLowerCase();
-        filtered = filtered.filter(t => t.sigla.toLowerCase().includes(f));
+        const f = normalizarString(filtroSigla.trim().replace(/%/g, ''));
+        filtered = filtered.filter(t => normalizarString(t.sigla).includes(f));
       }
       if (filtroDescricao.trim()) {
-        const f = filtroDescricao.trim().replace(/%/g, '').toLowerCase();
-        filtered = filtered.filter(t => (t.descricao || '').toLowerCase().includes(f));
+        const f = normalizarString(filtroDescricao.trim().replace(/%/g, ''));
+        filtered = filtered.filter(t => normalizarString(t.descricao || '').includes(f));
       }
 
       setTipos(filtered);

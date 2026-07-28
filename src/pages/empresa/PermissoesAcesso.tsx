@@ -44,13 +44,15 @@ const MENUS_FALLBACK: Menu[] = [
   { id: 'lic-cons', nome: '...Licitação - Consulta', path: '/licitacoes/consulta', ordem: 2, parent_id: 'ativa' },
   { id: 'lic-tipos', nome: '...Licitação - Tipos de Licitação', path: '/licitacoes/tipos', ordem: 3, parent_id: 'ativa' },
   { id: 'lic-marc', nome: '...Licitação - Marcação Pendente', path: '/licitacoes/marcacoes-pendentes', ordem: 4, parent_id: 'ativa' },
-  { id: 'org-cad', nome: '...Órgãos - Cadastro', path: '/orgaos/cadastro', ordem: 5, parent_id: 'ativa' },
-  { id: 'org-cons', nome: '...Órgãos - Consulta', path: '/orgaos/consulta', ordem: 6, parent_id: 'ativa' },
-  { id: 'org-agr', nome: '...Órgãos - Agrupamentos', path: '/orgaos/agrupamentos', ordem: 7, parent_id: 'ativa' },
-  { id: 'emp-sites', nome: '...Empresa - Sites', path: '/empresa/sites', ordem: 8, parent_id: 'ativa' },
-  { id: 'emp-ativ', nome: '...Empresa - Atividades', path: '/empresa/atividades', ordem: 9, parent_id: 'ativa' },
-  { id: 'emp-email', nome: '...Empresa - Caixas de E-mail', path: '/empresa/caixas-email', ordem: 10, parent_id: 'ativa' },
-  { id: 'emp-perm', nome: '...Empresa - Permissões de Acesso', path: '/empresa/permissoes', ordem: 11, parent_id: 'ativa' },
+  { id: 'lic-prod', nome: '...Licitação - Rel. Produtividade', path: '/licitacoes/relatorio-produtividade', ordem: 5, parent_id: 'ativa' },
+  { id: 'org-cad', nome: '...Órgãos - Cadastro', path: '/orgaos/cadastro', ordem: 6, parent_id: 'ativa' },
+  { id: 'org-cons', nome: '...Órgãos - Consulta', path: '/orgaos/consulta', ordem: 7, parent_id: 'ativa' },
+  { id: 'org-agr', nome: '...Órgãos - Agrupamentos', path: '/orgaos/agrupamentos', ordem: 8, parent_id: 'ativa' },
+  { id: 'org-sites', nome: '...Órgãos - Sites', path: '/orgaos/sites', ordem: 9, parent_id: 'ativa' },
+  { id: 'emp-ativ', nome: '...Empresa - Atividades', path: '/empresa/atividades', ordem: 10, parent_id: 'ativa' },
+  { id: 'emp-email', nome: '...Empresa - Caixas de E-mail', path: '/empresa/caixas-email', ordem: 11, parent_id: 'ativa' },
+  { id: 'emp-perm', nome: '...Empresa - Permissões de Acesso', path: '/empresa/permissoes', ordem: 12, parent_id: 'ativa' },
+  { id: 'emp-cli', nome: '...Empresa - Clientes', path: '/empresa/clientes', ordem: 13, parent_id: 'ativa' },
 ];
 
 export default function PermissoesAcesso() {

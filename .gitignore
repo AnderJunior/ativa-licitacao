@@ -29,3 +29,6 @@ supabase
 
 
 
+
+# Configuracao local do Claude Code
+.claude/
