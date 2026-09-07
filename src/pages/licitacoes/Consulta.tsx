@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Textarea } from '@/components/ui/textarea';
 import { useResizableColumns } from '@/hooks/use-resizable-columns';
 import { cn } from '@/lib/utils';
+import { chaveVinculo } from '@/lib/orgaoUasg';
 
 interface Contratacao {
   id: string;
@@ -143,6 +144,9 @@ const formatarDataHora = (iso: string | null | undefined): string => {
   const hora = (timeRaw || '').replace('Z', '').split('.')[0].slice(0, 8);
   return hora ? `${dataFmt} ${hora}` : dataFmt;
 };
+
+/** Chave do vínculo desta unidade: par (CNPJ, unidade compradora). */
+const getChaveVinculo = (c: any): string | null => chaveVinculo(getCnpj(c), c?.un_cod);
 
 const getCnpj = (c: any): string | null => {
   if (c.cnpj) return c.cnpj;
@@ -407,15 +411,18 @@ export default function LicitacaoConsulta() {
     try {
       const data = await api.get<any[]>('/api/orgaos-vinculados');
       const map: Record<string, { orgao_id: string; orgao_nome: string }> = {};
-      (data || []).forEach((v: any) => { if (v.cnpj) map[v.cnpj] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome }; });
+      (data || []).forEach((v: any) => {
+        const chave = chaveVinculo(v.cnpj, v.un_cod);
+        if (chave) map[chave] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome };
+      });
       setVinculosMap(map);
     } catch { /* silencia */ }
   }, []);
 
   const handleSelectUnidade = (c: any) => {
     setSelectedUnidade(c);
-    const cnpj = getCnpj(c);
-    const vinculo = cnpj ? vinculosMap[cnpj] : null;
+    const chave = getChaveVinculo(c);
+    const vinculo = chave ? vinculosMap[chave] : null;
     setVinculoOrgaoId(vinculo?.orgao_id || '');
     setVinculoOrgaoNome(vinculo?.orgao_nome || '');
   };
@@ -424,15 +431,18 @@ export default function LicitacaoConsulta() {
     if (!selectedUnidade || !vinculoOrgaoId) { toast.error('Selecione um órgão para associar.'); return; }
     const cnpj = getCnpj(selectedUnidade);
     if (!cnpj) { toast.error('Unidade sem CNPJ — não é possível associar.'); return; }
+    const unCod = (selectedUnidade as any).un_cod;
+    if (!unCod) { toast.error('Unidade sem código (UnCod) — não é possível associar.'); return; }
+    const chave = chaveVinculo(cnpj, unCod)!;
     setAssociando(true);
     try {
-      await api.post('/api/orgaos-vinculados/upsert', { cnpj, orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome });
+      await api.post('/api/orgaos-vinculados/upsert', { cnpj, un_cod: unCod, orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome });
     } catch (err: any) {
       toast.error('Erro ao associar: ' + err.message);
       setAssociando(false);
       return;
     }
-    setVinculosMap(prev => ({ ...prev, [cnpj]: { orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome } }));
+    setVinculosMap(prev => ({ ...prev, [chave]: { orgao_id: vinculoOrgaoId, orgao_nome: vinculoOrgaoNome } }));
     toast.success('Órgão associado com sucesso!');
     setAssociando(false);
   };
@@ -665,7 +675,7 @@ export default function LicitacaoConsulta() {
           aoa.push([
             ufComNome(u.uf), esferaNome(u.esfera), poderNome(u.poder),
             u.orgao_pncp || '', cnpj, u.unidade || '', u.un_cod || '',
-            u.municipio || '', (cnpj ? vinculosMap[cnpj]?.orgao_nome : '') || '',
+            u.municipio || '', (getChaveVinculo(u) ? vinculosMap[getChaveVinculo(u)!]?.orgao_nome : '') || '',
           ]);
         });
         sheetName = 'Unidades';
@@ -1109,7 +1119,11 @@ export default function LicitacaoConsulta() {
     };
     const dir = sortDir === 'asc' ? 1 : -1;
     if (sortCol === 'OrgaoAtiva') {
-      arr.sort((a, b) => dir * (vinculosMap[a.cnpj]?.orgao_nome || '').localeCompare(vinculosMap[b.cnpj]?.orgao_nome || '', 'pt'));
+      const nomeVinculo = (u: any) => {
+        const chave = getChaveVinculo(u);
+        return (chave ? vinculosMap[chave]?.orgao_nome : '') || '';
+      };
+      arr.sort((a, b) => dir * nomeVinculo(a).localeCompare(nomeVinculo(b), 'pt'));
     } else if (campoPorColuna[sortCol]) {
       const campo = campoPorColuna[sortCol];
       arr.sort((a, b) => dir * String(a[campo] ?? '').localeCompare(String(b[campo] ?? ''), 'pt', { numeric: true }));
@@ -2075,7 +2089,8 @@ export default function LicitacaoConsulta() {
                   <tbody className="[&_tr:last-child]:border-0">
                     {unidadesPaginadas.map((u) => {
                       const cnpj = u.cnpj || null;
-                      const orgaoAtiva = cnpj ? vinculosMap[cnpj]?.orgao_nome : undefined;
+                      const chaveVinc = getChaveVinculo(u);
+                      const orgaoAtiva = chaveVinc ? vinculosMap[chaveVinc]?.orgao_nome : undefined;
                       const key = `${u.cnpj ?? ''}|${u.un_cod ?? ''}`;
                       const isSelected = !!selectedUnidade && `${selectedUnidade.cnpj ?? ''}|${selectedUnidade.un_cod ?? ''}` === key;
                       return (
@@ -2506,9 +2521,9 @@ export default function LicitacaoConsulta() {
                 )}
               </div>
               {/* Mostra associação existente */}
-              {getCnpj(selectedUnidade) && vinculosMap[getCnpj(selectedUnidade)] && (
+              {getChaveVinculo(selectedUnidade) && vinculosMap[getChaveVinculo(selectedUnidade)!] && (
                 <p className="text-xs text-green-700 font-medium">
-                  ✓ Atualmente associado a: <strong>{vinculosMap[getCnpj(selectedUnidade)].orgao_nome}</strong>
+                  ✓ Atualmente associado a: <strong>{vinculosMap[getChaveVinculo(selectedUnidade)!].orgao_nome}</strong>
                 </p>
               )}
             </div>

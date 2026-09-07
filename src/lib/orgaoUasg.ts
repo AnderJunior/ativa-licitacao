@@ -18,7 +18,7 @@ export type ResultadoOrgao<T extends OrgaoRef = OrgaoRef> =
   | { status: 'ambiguo'; candidatos: T[]; termo: string }
   | { status: 'nao-encontrado'; termo: string | null; codigos: string[] };
 
-/** Associação CNPJ → órgão cadastrado, definida pelo usuário na tela de Consulta. */
+/** Associação unidade compradora → órgão cadastrado, definida pelo usuário na tela de Consulta. */
 export interface VinculoOrgao {
   orgao_id?: string | null;
   orgao_nome?: string | null;
@@ -26,6 +26,26 @@ export interface VinculoOrgao {
 
 /** CNPJ apenas com dígitos — o PNCP às vezes envia formatado. */
 export const normalizarCnpj = (s: string | null | undefined): string => (s || '').replace(/\D/g, '');
+
+/**
+ * Chave de um vínculo: o par (CNPJ, unidade compradora).
+ *
+ * A associação é por UNIDADE, não por CNPJ — um mesmo CNPJ pode ter várias
+ * unidades no PNCP (a Prefeitura de Vila Velha tem a unidade 1 e a 985703) e
+ * cada uma pode apontar para um órgão diferente. O CNPJ continua na chave
+ * porque o un_cod é um código interno do órgão e se repete entre CNPJs
+ * distintos (o un_cod "1" aparece em ~1867 CNPJs da base).
+ *
+ * Retorna null quando falta CNPJ ou unidade — sem os dois não há vínculo.
+ */
+export const chaveVinculo = (
+  cnpj: string | null | undefined,
+  unCod: string | null | undefined,
+): string | null => {
+  const c = normalizarCnpj(cnpj);
+  const u = (unCod || '').trim();
+  return c && u ? c + '|' + u : null;
+};
 
 /** Minúsculas, sem acento, espaços colapsados. */
 export const normalizarTexto = (s: string | null | undefined): string =>
@@ -198,17 +218,18 @@ export function resolverOrgaoPorConteudo<T extends OrgaoRef>(conteudo: string, o
  *
  * O nome que o PNCP envia raramente é igual ao nome cadastrado
  * ("MUNICIPIO DE PIUMA" x "PREFEITURA MUNICIPAL DE PIUMA"), por isso a
- * associação por CNPJ — feita pelo usuário em Consulta > Unidades — tem
- * prioridade sobre qualquer comparação de nome.
+ * associação da unidade compradora — feita pelo usuário em Consulta > Unidades
+ * — tem prioridade sobre qualquer comparação de nome.
  */
 export function resolverOrgaoDaLicitacao<T extends OrgaoRef>(
-  licitacao: { orgao_pncp?: string | null; cnpj?: string | null },
+  licitacao: { orgao_pncp?: string | null; cnpj?: string | null; un_cod?: string | null },
   orgaos: T[],
   vinculos?: Record<string, VinculoOrgao> | null
 ): ResultadoOrgao<T> {
-  // 1. Associação explícita por CNPJ — é a intenção declarada do usuário.
-  const cnpj = normalizarCnpj(licitacao.cnpj);
-  const vinculo = cnpj && vinculos ? vinculos[cnpj] : undefined;
+  // 1. Associação explícita da unidade compradora — é a intenção declarada do
+  //    usuário. Vale só para a unidade associada, não para o CNPJ inteiro.
+  const chave = chaveVinculo(licitacao.cnpj, licitacao.un_cod);
+  const vinculo = chave && vinculos ? vinculos[chave] : undefined;
   if (vinculo) {
     const porId = vinculo.orgao_id ? orgaos.find(o => o.id === vinculo.orgao_id) : undefined;
     if (porId) return { status: 'encontrado', orgao: porId, via: 'vinculo' };

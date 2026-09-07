@@ -7,6 +7,8 @@ const routeNames: Record<string, string> = {
   'consulta': 'Consulta',
   'tipos': 'Tipos',
   'marcacoes-pendentes': 'Marcações Pendentes',
+  'relatorio-produtividade': 'Rel. Produtividade',
+  'config-busca': 'Config. Busca',
   'orgaos': 'Órgãos',
   'agrupamentos': 'Agrupamentos',
   'empresa': 'Empresa',

@@ -25,7 +25,7 @@ import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
 import { cn } from '@/lib/utils';
 import { ORDEM_ARVORE_ATIVIDADES } from '@/lib/ordemArvoreAtividades';
-import { resolverOrgaoPorConteudo, resolverOrgaoDaLicitacao, normalizarCnpj, normalizarTexto, type VinculoOrgao } from '@/lib/orgaoUasg';
+import { resolverOrgaoPorConteudo, resolverOrgaoDaLicitacao, normalizarCnpj, normalizarTexto, chaveVinculo, type VinculoOrgao } from '@/lib/orgaoUasg';
 import { resolverTipoPorConteudo } from '@/lib/tipoLicitacao';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -39,7 +39,8 @@ interface Contratacao {
   uf: string | null;
   municipio: string | null;
   orgao_pncp: string | null;
-  cnpj?: string | null; // CNPJ da unidade — chave da associação com o órgão cadastrado
+  cnpj?: string | null; // CNPJ da unidade — junto com un_cod forma a chave da associação
+  un_cod?: string | null; // Código da unidade compradora no PNCP
   modalidade: string | null;
   descricao_modalidade: string | null;
   num_licitacao: string | null;
@@ -88,6 +89,23 @@ const UFS = [
   'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
 ];
+
+/**
+ * Chave canônica de um número de licitação, usada para comparar duplicidade.
+ *
+ * Qualquer diferença de dígito faz o número ser outro — inclusive zero à
+ * esquerda. "164-2", "164-02", "1642", "02" e "2" são cinco números distintos.
+ *
+ * A única exceção é o ponto, que é separador de milhar e não faz parte do
+ * número: "1.642" é o mesmo que "1642".
+ *
+ * Retorna null quando não há dígito nenhum.
+ */
+const chaveNumeroLicitacao = (valor: string | null | undefined): string | null => {
+  if (valor == null) return null;
+  const limpo = String(valor).replace(/\./g, '').trim();
+  return /\d/.test(limpo) ? limpo : null;
+};
 
 export default function LicitacaoCadastro() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -434,7 +452,7 @@ export default function LicitacaoCadastro() {
     
     if (orgaos.length > 0 && formData.id && formData.orgao_pncp) {
       const resultado = resolverOrgaoDaLicitacao(
-        { orgao_pncp: formData.orgao_pncp, cnpj: formData.cnpj },
+        { orgao_pncp: formData.orgao_pncp, cnpj: formData.cnpj, un_cod: formData.un_cod },
         orgaos,
         vinculosOrgaos,
       );
@@ -541,11 +559,9 @@ export default function LicitacaoCadastro() {
     if (tipos.length === 0 || orgaos.length === 0) return;
 
     const tipoId = tipoValido.id;
-    const sequencialDigitado = formData.sequencial_compra?.replace(/\D/g, '') || '';
+    const chaveDigitada = chaveNumeroLicitacao(formData.sequencial_compra);
     const anoCompra = Number(formData.ano_compra);
-    if (!sequencialDigitado || isNaN(anoCompra)) return;
-    const sequencialNumero = Number(sequencialDigitado);
-    if (isNaN(sequencialNumero)) return;
+    if (!chaveDigitada || isNaN(anoCompra)) return;
 
     let orgaoParaVerificar = formData.orgao_pncp!;
     const orgao = orgaos.find(o => o.id === formData.orgao_pncp || o.nome_orgao === formData.orgao_pncp);
@@ -585,8 +601,7 @@ export default function LicitacaoCadastro() {
 
         const numeroDeTitulo = lic.titulo ? extrairNumeroDoTitulo(lic.titulo) : null;
         if (!numeroDeTitulo) return false;
-        const numeroExistente = Number(numeroDeTitulo.replace(/\D/g, ''));
-        return !isNaN(numeroExistente) && numeroExistente === sequencialNumero;
+        return chaveNumeroLicitacao(numeroDeTitulo) === chaveDigitada;
       });
 
       if (licitacaoDuplicada && (!licitacaoIdAtual || licitacaoDuplicada.id !== licitacaoIdAtual)) {
@@ -938,11 +953,11 @@ export default function LicitacaoCadastro() {
 
   const loadVinculosOrgaos = async () => {
     try {
-      const data = await api.get<{ cnpj: string | null; orgao_id: string | null; orgao_nome: string | null }[]>('/api/orgaos-vinculados');
+      const data = await api.get<{ cnpj: string | null; un_cod: string | null; orgao_id: string | null; orgao_nome: string | null }[]>('/api/orgaos-vinculados');
       const mapa: Record<string, VinculoOrgao> = {};
       (data || []).forEach(v => {
-        const cnpj = normalizarCnpj(v.cnpj);
-        if (cnpj) mapa[cnpj] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome };
+        const chave = chaveVinculo(v.cnpj, v.un_cod);
+        if (chave) mapa[chave] = { orgao_id: v.orgao_id, orgao_nome: v.orgao_nome };
       });
       setVinculosOrgaos(mapa);
     } catch (err) {
@@ -2884,7 +2899,9 @@ export default function LicitacaoCadastro() {
                 }}
                 onChange={(e) => {
                   const valor = e.target.value;
-                  const valorLimpo = valor.replace(/[^\d\/]/g, '');
+                  // Aceita hifen: numeros como "164-2/2026" existem e o resto do
+                  // sistema ja os reconhece (ver extrairNumeroDoTitulo).
+                  const valorLimpo = valor.replace(/[^\d\/-]/g, '');
                   
                   const partes = valorLimpo.split('/');
                   let valorFormatado = partes[0] || '';

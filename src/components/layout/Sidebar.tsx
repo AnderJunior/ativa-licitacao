@@ -18,7 +18,8 @@ import {
   Mail,
   Shield,
   BarChart3,
-  UserCheck
+  UserCheck,
+  SlidersHorizontal
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -46,6 +47,7 @@ const menuItems: MenuItem[] = [
       { label: 'Tipos de Licitação', path: '/licitacoes/tipos', icon: Info },
       { label: 'Marcação Pendente', path: '/licitacoes/marcacoes-pendentes', icon: AlertCircle },
       { label: 'Rel. Produtividade', path: '/licitacoes/relatorio-produtividade', icon: BarChart3 },
+      { label: 'Config. Busca', path: '/licitacoes/config-busca', icon: SlidersHorizontal },
     ],
   },
   {

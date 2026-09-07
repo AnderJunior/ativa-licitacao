@@ -72,14 +72,21 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
   fastify.get('/api/orgaos/:id/pncp', { preHandler: [requireAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
-    const vinculo = await fastify.prisma.orgaos_vinculados.findFirst({ where: { orgao_id: id } });
+    const vinculos = await fastify.prisma.orgaos_vinculados.findMany({ where: { orgao_id: id } });
+    const vinculo = vinculos[0];
     if (!vinculo?.cnpj) {
       return reply.send({ associado: false, cnpj: null, unidades: [] });
     }
 
-    // Uma linha por unidade compradora daquele CNPJ.
+    // Mostra apenas as unidades efetivamente associadas a este orgao. Vinculos
+    // antigos, gravados antes da associacao por unidade, tem un_cod nulo e
+    // continuam valendo para todas as unidades do CNPJ ate serem refeitos.
+    const filtros = vinculos
+      .filter(v => v.cnpj)
+      .map(v => (v.un_cod ? { cnpj: v.cnpj, un_cod: v.un_cod } : { cnpj: v.cnpj }));
+
     const linhas = await fastify.prisma.contratacoes.findMany({
-      where: { cnpj: vinculo.cnpj },
+      where: { OR: filtros },
       select: {
         cnpj: true, esfera: true, poder: true, orgao_pncp: true,
         un_cod: true, unidade: true, uf: true, municipio: true,
@@ -173,21 +180,25 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
   // GET /api/orgaos-vinculados
   fastify.get('/api/orgaos-vinculados', { preHandler: [requireAuth] }, async (request, reply) => {
     const vinculados = await fastify.prisma.orgaos_vinculados.findMany({
-      select: { cnpj: true, orgao_id: true, orgao_nome: true },
+      select: { cnpj: true, un_cod: true, orgao_id: true, orgao_nome: true },
     });
     return reply.send(vinculados);
   });
 
   // POST /api/orgaos-vinculados/upsert
+  // A associacao vale para UMA unidade compradora, identificada pelo par
+  // (cnpj, un_cod). Sem o un_cod a associacao respingaria em todas as unidades
+  // do mesmo CNPJ — era exatamente o bug de Vila Velha.
   fastify.post('/api/orgaos-vinculados/upsert', { preHandler: [requireAuth] }, async (request, reply) => {
-    const { cnpj, orgao_id, orgao_nome } = request.body as {
-      cnpj: string; orgao_id: string | null; orgao_nome: string | null;
+    const { cnpj, un_cod, orgao_id, orgao_nome } = request.body as {
+      cnpj: string; un_cod: string | null; orgao_id: string | null; orgao_nome: string | null;
     };
 
     if (!cnpj) return reply.status(400).send({ error: 'CNPJ obrigatório' });
+    if (!un_cod) return reply.status(400).send({ error: 'Unidade compradora obrigatória' });
 
     // Usa a API tipada do Prisma (trata orgao_id como uuid corretamente).
-    const existente = await fastify.prisma.orgaos_vinculados.findFirst({ where: { cnpj } });
+    const existente = await fastify.prisma.orgaos_vinculados.findFirst({ where: { cnpj, un_cod } });
     if (existente) {
       await fastify.prisma.orgaos_vinculados.update({
         where: { id: existente.id },
@@ -195,9 +206,14 @@ export default async function orgaosRoutes(fastify: FastifyInstance) {
       });
     } else {
       await fastify.prisma.orgaos_vinculados.create({
-        data: { cnpj, orgao_id, orgao_nome },
+        data: { cnpj, un_cod, orgao_id, orgao_nome },
       });
     }
+
+    // Vinculo legado (gravado por CNPJ, sem unidade) foi substituido pela
+    // associacao explicita desta unidade. Se ele ficasse, continuaria valendo
+    // para todas as unidades do CNPJ e o bug persistiria na tela do orgao.
+    await fastify.prisma.orgaos_vinculados.deleteMany({ where: { cnpj, un_cod: null } });
 
     return reply.send({ ok: true });
   });

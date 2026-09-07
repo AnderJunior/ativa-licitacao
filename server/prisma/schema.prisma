@@ -180,13 +180,21 @@ model orgaos_grupos {
   grupo      grupo_de_orgaos @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
 }
 
+// A associacao e por UNIDADE COMPRADORA, nao por CNPJ: o mesmo CNPJ pode ter
+// varias unidades no PNCP (ex.: Vila Velha tem as unidades 1 e 985703) e cada
+// uma pode apontar para um orgao diferente. A chave e o par (cnpj, un_cod) —
+// un_cod sozinho nao serve, pois se repete entre CNPJs distintos (un_cod "1"
+// aparece em ~1800 CNPJs).
 model orgaos_vinculados {
   id         String   @id @default(uuid()) @db.Uuid
   cnpj       String
+  un_cod     String?
   orgao_id   String?  @db.Uuid
   orgao_nome String?
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([cnpj, un_cod])
 }
 
 // ─── Clientes ───────────────────────────────────────────
