@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Textarea } from '@/components/ui/textarea';
 import { useResizableColumns } from '@/hooks/use-resizable-columns';
 import { cn, contemTexto } from '@/lib/utils';
+import { aplicarAvisoSituacao } from '@/lib/situacaoPncp';
 import { chaveVinculo } from '@/lib/orgaoUasg';
 
 interface Contratacao {
@@ -173,7 +174,7 @@ const COLUNAS_POR_LAYOUT: Record<string, string[]> = {
 // Colunas (reais no banco) que cada layout precisa — evita trazer colunas
 // grandes de texto/JSON e deixa a paginação rápida mesmo com o banco remoto.
 const SELECT_POR_LAYOUT: Record<string, string> = {
-  detalhado: 'id,regiao,uf,num_licitacao,num_ativa,created_at,dt_alterado_ativa,titulo,municipio,unidade,un_cod,orgao_pncp,cnpj,cd_pn,modalidade,descricao_modalidade,conteudo,complemento,dt_criacao,dt_importacao,dt_publicacao,dt_atualizacao,dt_vigencia_ini,dt_vinculo_ativa,esfera,poder',
+  detalhado: 'id,regiao,uf,num_licitacao,num_ativa,created_at,dt_alterado_ativa,titulo,municipio,unidade,un_cod,orgao_pncp,cnpj,cd_pn,modalidade,descricao_modalidade,conteudo,complemento,dt_criacao,dt_importacao,dt_publicacao,dt_atualizacao,dt_vigencia_ini,dt_vinculo_ativa,esfera,poder,situacao',
   unidades: 'id,uf,esfera,poder,orgao_pncp,cnpj,cd_pn,num_licitacao,unidade,un_cod,municipio',
   modalidade: 'id,modalidade,descricao_modalidade',
 };
@@ -706,7 +707,7 @@ export default function LicitacaoConsulta() {
             c.orgao_pncp || '',
             getCnpj(c) || '',
             (c as any).tipo_licitacao?.sigla || (c as any).modalidade || '',
-            (c as any).conteudo || '',
+            aplicarAvisoSituacao((c as any).conteudo, (c as any).situacao),
             (c as any).complemento || '',
             formatarDataHora((c as any).dt_criacao),
             formatarDataHora((c as any).dt_importacao),
@@ -2152,7 +2153,7 @@ export default function LicitacaoConsulta() {
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-xs truncate">{c.orgao_pncp || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{getCnpj(c) || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).tipo_licitacao?.sigla || (c as any).modalidade || '-'}</td>
-                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-[200px] truncate">{(c as any).conteudo || '-'}</td>
+                        <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A] max-w-[200px] truncate">{aplicarAvisoSituacao((c as any).conteudo, (c as any).situacao) || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{(c as any).complemento || '-'}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{formatDate((c as any).dt_criacao)}</td>
                         <td className="p-4 align-middle py-1.5 text-sm text-[#1A1A1A]">{formatDate((c as any).dt_importacao)}</td>
@@ -2502,7 +2503,7 @@ export default function LicitacaoConsulta() {
           <div className="h-48 flex-shrink-0 border-t border-border flex gap-0 bg-white">
             {/* Conteúdo */}
             <div className="flex-1 p-3 overflow-auto text-xs text-[#1A1A1A] leading-relaxed whitespace-pre-wrap border-r border-border">
-              {(selectedConferir as any).conteudo || (selectedConferir as any).textos_cadastro_manual || 'Sem conteúdo'}
+              {aplicarAvisoSituacao((selectedConferir as any).conteudo || (selectedConferir as any).textos_cadastro_manual, (selectedConferir as any).situacao) || 'Sem conteúdo'}
             </div>
             {/* Atividades */}
             <div className="w-56 flex-shrink-0 p-3 overflow-auto">
@@ -2629,7 +2630,7 @@ export default function LicitacaoConsulta() {
           <div className="h-48 flex-shrink-0 border-t border-border flex gap-0 bg-white">
             {/* Conteúdo */}
             <div className="flex-1 p-3 overflow-auto text-xs text-[#1A1A1A] leading-relaxed whitespace-pre-wrap border-r border-border">
-              {(selectedEnviada as any).conteudo || (selectedEnviada as any).textos_cadastro_manual || 'Sem conteúdo'}
+              {aplicarAvisoSituacao((selectedEnviada as any).conteudo || (selectedEnviada as any).textos_cadastro_manual, (selectedEnviada as any).situacao) || 'Sem conteúdo'}
             </div>
             {/* Atividades */}
             <div className="w-56 flex-shrink-0 p-3 overflow-auto">

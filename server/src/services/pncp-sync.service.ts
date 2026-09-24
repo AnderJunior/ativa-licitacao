@@ -106,6 +106,8 @@ interface PncpContratacao {
   dataAberturaProposta: string;
   dataEncerramentoProposta: string;
   valorTotalEstimado: number;
+  /** "Divulgada no PNCP", "Suspensa", "Revogada" ou "Anulada". */
+  situacaoCompraNome: string;
   orgaoEntidade: PncpOrgaoEntidade;
   unidadeOrgao: PncpUnidadeOrgao;
 }
@@ -181,6 +183,12 @@ export function getSyncConfig() {
         valor: 'Ativo',
         descricao: 'Licitacao com proposta ja encerrada, ou sem data de encerramento, nao e importada. '
           + 'O que ja foi importado continua sendo atualizado normalmente.',
+      },
+      {
+        nome: 'Suspensa, revogada e anulada',
+        valor: 'Importadas com aviso',
+        descricao: 'Entram normalmente e a situacao do PNCP aparece na primeira linha do texto. '
+          + 'A situacao e atualizada ate nas licitacoes ja cadastradas.',
       },
       {
         nome: 'Data de criacao congelada',
@@ -410,6 +418,7 @@ function camposDoPncp(item: PncpContratacao) {
     ano_compra: item.anoCompra != null ? String(item.anoCompra) : null,
     sequencial_compra: item.sequencialCompra != null ? String(item.sequencialCompra) : null,
     dt_encerramento_proposta: item.dataEncerramentoProposta || null,
+    situacao: item.situacaoCompraNome || null,
   };
 }
 
@@ -463,7 +472,7 @@ export async function processPage(
     where: { num_licitacao: { in: validos.map(i => i.numeroControlePNCP) } },
     select: {
       id: true, num_licitacao: true, un_cod: true, id_codigo_modalidade: true,
-      cadastrado: true, dt_atualizacao: true,
+      cadastrado: true, dt_atualizacao: true, situacao: true,
     },
   });
 
@@ -472,6 +481,7 @@ export async function processPage(
 
   const novos: any[] = [];
   const paraAtualizar: { id: string; data: ReturnType<typeof camposDoPncp> }[] = [];
+  const situacoesParaAtualizar: { id: string; situacao: string | null }[] = [];
   const vistosNestaPagina = new Set<string>();
   const inicioDoDia = new Date();
   inicioDoDia.setHours(0, 0, 0, 0);
@@ -502,11 +512,25 @@ export async function processPage(
       continue;
     }
 
-    // Ja cadastrada pela equipe: preserva como esta.
-    if (existente.cadastrado === true) { skipped++; continue; }
+    const situacaoPncp = item.situacaoCompraNome || null;
 
-    // O PNCP nao alterou nada desde a ultima importacao.
-    if (existente.dt_atualizacao === (item.dataAtualizacao || null)) { skipped++; continue; }
+    // Ja cadastrada pela equipe: preserva como esta — exceto a situacao. Uma
+    // licitacao suspensa/revogada/anulada depois do cadastro precisa aparecer
+    // para a equipe, e a situacao nao e trabalho dela.
+    if (existente.cadastrado === true) {
+      if (existente.situacao !== situacaoPncp) {
+        situacoesParaAtualizar.push({ id: existente.id, situacao: situacaoPncp });
+      } else {
+        skipped++;
+      }
+      continue;
+    }
+
+    // O PNCP nao alterou nada desde a ultima importacao. A situacao entra na
+    // comparacao porque suspender/revogar nem sempre mexe em dataAtualizacao.
+    if (existente.dt_atualizacao === (item.dataAtualizacao || null) && existente.situacao === situacaoPncp) {
+      skipped++; continue;
+    }
 
     paraAtualizar.push({ id: existente.id, data: camposDoPncp(item) });
   }
@@ -539,6 +563,16 @@ export async function processPage(
     } catch (err: any) {
       errors++;
       console.error(`[PNCP] Erro ao atualizar ${alvo.id}:`, err.message);
+    }
+  }
+
+  for (const alvo of situacoesParaAtualizar) {
+    try {
+      await prisma.contratacoes.update({ where: { id: alvo.id }, data: { situacao: alvo.situacao } });
+      updated++;
+    } catch (err: any) {
+      errors++;
+      console.error(`[PNCP] Erro ao atualizar situacao de ${alvo.id}:`, err.message);
     }
   }
 

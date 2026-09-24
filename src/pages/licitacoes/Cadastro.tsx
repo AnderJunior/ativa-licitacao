@@ -21,6 +21,7 @@ import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, 
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LinksPopup } from '@/components/licitacoes/LinksPopup';
 import { ItensPncp, extrairIdCompraPncp } from '@/components/licitacoes/ItensPncp';
+import { aplicarAvisoSituacao } from '@/lib/situacaoPncp';
 import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPopup';
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
@@ -1175,6 +1176,8 @@ export default function LicitacaoCadastro() {
           ? data.conteudo 
           : formatarConteudoLicitacao(data);
       }
+      // Suspensa/revogada/anulada no PNCP: aviso na primeira linha do texto
+      conteudoFormatado = aplicarAvisoSituacao(conteudoFormatado, data.situacao);
 
       // Extrai o número do titulo (ex: "Edital nº 03" → "03") e combina com ano_compra
       let sequencialCompra = data.titulo ? extrairNumeroDoTitulo(data.titulo) : null;
@@ -1385,6 +1388,8 @@ export default function LicitacaoCadastro() {
         ? licitacao.conteudo
         : formatarConteudoLicitacao(licitacao);
     }
+    // Suspensa/revogada/anulada no PNCP: aviso na primeira linha do texto
+    conteudoFormatado = aplicarAvisoSituacao(conteudoFormatado, licitacao.situacao);
 
     // Extrai o número do titulo (ex: "Edital nº 03" → "03") e combina com ano_compra
     let sequencialCompra = licitacao.titulo ? extrairNumeroDoTitulo(licitacao.titulo) : null;

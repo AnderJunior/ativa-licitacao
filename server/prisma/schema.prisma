@@ -91,6 +91,7 @@ model contratacoes {
   poder                    String?
   regiao                   String?
   sequencial_compra        String?
+  situacao                 String?
   textos_cadastro_manual   String?
   tipo_cadastro            String?
   titulo                   String?
