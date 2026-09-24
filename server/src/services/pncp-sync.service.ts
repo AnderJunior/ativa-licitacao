@@ -852,6 +852,16 @@ export function startPncpCron(prisma: PrismaClient) {
 
   const executar = (modo: SyncModo, origem: string) => {
     if (isSyncing) {
+      // A completa nao pode ser descartada: ela e a unica que traz o que foi
+      // publicado em dias anteriores. Antes ela esperava o proximo horario (6 h)
+      // — no deploy de 24/09, com o banco recem-zerado, a primeira completa caiu
+      // em cima de uma incremental e a base ficou 6 h so com o que mudou no dia.
+      // Agora ela tenta de novo a cada minuto ate a incremental liberar.
+      if (modo === 'completo') {
+        console.log(`[PNCP Cron] ${origem}: outra varredura em andamento, nova tentativa em 1 min`);
+        setTimeout(() => executar(modo, origem), 60_000);
+        return;
+      }
       console.log(`[PNCP Cron] ${origem}: ciclo anterior ainda em andamento, aguardando o proximo horario`);
       return;
     }
