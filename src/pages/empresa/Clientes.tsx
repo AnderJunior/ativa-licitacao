@@ -11,7 +11,7 @@ import { Loader2, Plus, Pencil, Trash2, Eye, ArrowLeft, X, Search, Download } fr
 import * as XLSX from 'xlsx';
 import { usePermissoes } from '@/contexts/PermissoesContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { cn } from '@/lib/utils';
+import { cn, contemTexto } from '@/lib/utils';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ORDEM_ARVORE_ATIVIDADES } from '@/lib/ordemArvoreAtividades';
@@ -374,8 +374,8 @@ export default function Clientes() {
 
       // Filtra com os mesmos critérios da lista
       let filtrados = clientesComEmails;
-      if (filtroNome) filtrados = filtrados.filter(c => c.nome.toLowerCase().includes(filtroNome.toLowerCase()));
-      if (filtroCidade) filtrados = filtrados.filter(c => (c.cidade || '').toLowerCase().includes(filtroCidade.toLowerCase()));
+      if (filtroNome) filtrados = filtrados.filter(c => contemTexto(c.nome, filtroNome));
+      if (filtroCidade) filtrados = filtrados.filter(c => contemTexto(c.cidade, filtroCidade));
       if (filtroUF) filtrados = filtrados.filter(c => c.uf === filtroUF);
       if (filtroStatus === 'ativo') filtrados = filtrados.filter(c => isClienteAtivo(c));
       if (filtroStatus === 'inativo') filtrados = filtrados.filter(c => !isClienteAtivo(c));
@@ -501,8 +501,8 @@ export default function Clientes() {
 
   // ─── Filtered list ─────────────────────────────────────
   const clientesFiltrados = clientes.filter(c => {
-    if (filtroNome && !c.nome.toLowerCase().includes(filtroNome.toLowerCase())) return false;
-    if (filtroCidade && !(c.cidade || '').toLowerCase().includes(filtroCidade.toLowerCase())) return false;
+    if (filtroNome && !contemTexto(c.nome, filtroNome)) return false;
+    if (filtroCidade && !contemTexto(c.cidade, filtroCidade)) return false;
     if (filtroUF && c.uf !== filtroUF) return false;
     if (filtroStatus === 'ativo' && !isClienteAtivo(c)) return false;
     if (filtroStatus === 'inativo' && isClienteAtivo(c)) return false;
@@ -1245,7 +1245,7 @@ export default function Clientes() {
                   <Input placeholder="Filtrar grupo..." value={filtroGrupo} onChange={e => setFiltroGrupo(e.target.value)} className="h-8 text-sm" />
                   <div className="border rounded-lg p-2 max-h-[400px] overflow-auto">
                     {grupos
-                      .filter(g => !filtroGrupo || g.nome.toLowerCase().includes(filtroGrupo.toLowerCase()))
+                      .filter(g => !filtroGrupo || contemTexto(g.nome, filtroGrupo))
                       .map(g => (
                         <div key={g.id} className="flex items-center gap-2 py-1 px-1 hover:bg-muted/30 rounded">
                           <Checkbox

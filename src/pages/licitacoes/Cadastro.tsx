@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { Loader2, Save, Trash2, X, Search, Link2, ChevronsUpDown, CalendarIcon, FileText, RotateCw, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LinksPopup } from '@/components/licitacoes/LinksPopup';
+import { ItensPncp, extrairIdCompraPncp } from '@/components/licitacoes/ItensPncp';
 import { BuscarLicitacaoPopup } from '@/components/licitacoes/BuscarLicitacaoPopup';
 import { BuscarOrgaoPopup } from '@/components/orgaos/BuscarOrgaoPopup';
 import { BuscarTipoPopup } from '@/components/licitacoes/BuscarTipoPopup';
@@ -80,6 +81,7 @@ interface TipoLicitacao {
 interface Orgao {
   id: string;
   nome_orgao: string;
+  uf?: string | null;
   compras_net?: string | null;
   compras_mg?: string | null;
 }
@@ -94,7 +96,10 @@ const UFS = [
  * Chave canônica de um número de licitação, usada para comparar duplicidade.
  *
  * Qualquer diferença de dígito faz o número ser outro — inclusive zero à
- * esquerda. "164-2", "164-02", "1642", "02" e "2" são cinco números distintos.
+ * esquerda: "26", "026" e "0026" são três números distintos, assim como
+ * "164-2", "164-02" e "1642". O padrão de 3 dígitos vale para o que vem do
+ * PNCP (a sincronização já grava "000011" como "011"); o que a equipe digita
+ * é gravado e comparado exatamente como foi digitado.
  *
  * A única exceção é o ponto, que é separador de milhar e não faz parte do
  * número: "1.642" é o mesmo que "1642".
@@ -631,8 +636,9 @@ export default function LicitacaoCadastro() {
     }
     
     // Se o usuário já fechou o popup para este conteúdo, não reabre
-    const conteudoNormalizado = conteudoTrim.toLowerCase().replace(/\s+/g, ' ').trim();
-    const ignoradoNormalizado = conteudoIgnorado.toLowerCase().replace(/\s+/g, ' ').trim();
+    // normalizarTexto ignora acento: "prefeitura de piuma" reconhece "PREFEITURA DE PIÚMA"
+    const conteudoNormalizado = normalizarTexto(conteudoTrim);
+    const ignoradoNormalizado = normalizarTexto(conteudoIgnorado);
     if (conteudoNormalizado === ignoradoNormalizado && conteudoIgnorado) {
       return;
     }
@@ -642,8 +648,8 @@ export default function LicitacaoCadastro() {
     
     // Verifica se algum órgão corresponde ao texto digitado
     const orgaosEncontrados = orgaos.filter(orgao => {
-      const nomeOrgaoNormalizado = orgao.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
-      
+      const nomeOrgaoNormalizado = normalizarTexto(orgao.nome_orgao);
+
       // Verifica se o texto digitado corresponde exatamente ou é parte do nome do órgão
       // E vice-versa: se o nome do órgão corresponde ao texto digitado
       return nomeOrgaoNormalizado === conteudoNormalizado || 
@@ -654,7 +660,7 @@ export default function LicitacaoCadastro() {
     // Se encontrou órgão(ãos) e o texto corresponde
     if (orgaosEncontrados.length > 0) {
       const primeiro = orgaosEncontrados[0];
-      const nomeOrgaoNormalizado = primeiro.nome_orgao.toLowerCase().replace(/\s+/g, ' ').trim();
+      const nomeOrgaoNormalizado = normalizarTexto(primeiro.nome_orgao);
       
       // Verifica se o texto corresponde exatamente ou é uma parte inicial do nome do órgão
       // Mínimo de 3 caracteres para evitar abertura muito precoce
@@ -664,8 +670,8 @@ export default function LicitacaoCadastro() {
         const timeoutId = setTimeout(() => {
           // Verifica novamente se o conteúdo ainda corresponde (pode ter mudado)
           const conteudoAtual = (formData.conteudo || '').trim();
-          const conteudoAtualNormalizado = conteudoAtual.toLowerCase().replace(/\s+/g, ' ').trim();
-          const ignoradoAtualNormalizado = conteudoIgnorado.toLowerCase().replace(/\s+/g, ' ').trim();
+          const conteudoAtualNormalizado = normalizarTexto(conteudoAtual);
+          const ignoradoAtualNormalizado = normalizarTexto(conteudoIgnorado);
           
           // Não abre se o conteúdo foi ignorado ou se o popup já está aberto
           if (conteudoAtual === conteudoTrim && 
@@ -1589,6 +1595,17 @@ export default function LicitacaoCadastro() {
         link_processo: formData.link_processo || null,
         ...(isCadastroManual ? { titulo: formData.sequencial_compra || null } : {}),
       };
+
+      // Manual: o campo uf não é preenchido pelo formulário (o seletor "PNCP" guarda
+      // a UF em formData.pncp e é descartado). Sem isso a Consulta mostra UF "-".
+      // Ordem: "Local: Cidade/UF" do texto → UF já gravada → UF do órgão escolhido → seletor PNCP.
+      if (isCadastroManual) {
+        const ufDoTexto = (conteudoParaSalvar || '').match(/Local:\s*[^\n/]*\/\s*([A-Za-z]{2})\b/)?.[1];
+        const ufCandidata = [ufDoTexto, formData.uf, orgaoValido?.uf, formData.pncp]
+          .map(u => (u || '').trim().toUpperCase())
+          .find(u => UFS.includes(u));
+        dataToSave.uf = ufCandidata || null;
+      }
 
       // Atualiza updated_at automaticamente quando cadastrado = true
       if (dataToSave.cadastrado === true) {
@@ -3231,7 +3248,12 @@ export default function LicitacaoCadastro() {
                 Exibir Licitação
               </div>
               <div className="flex-1 min-h-[300px] p-4 overflow-auto">
-                {formData.link_processo && formData.link_processo.trim() !== '' ? (
+                {(() => {
+                  // Licitação do PNCP (importada, ou manual com "Id Contratação PNCP" no texto):
+                  // mostra o espelho dos itens do edital, como no sistema antigo.
+                  const idPncp = extrairIdCompraPncp(formData.num_licitacao, formData.conteudo, formData.link_processo);
+                  return idPncp ? <ItensPncp id={idPncp} /> : null;
+                })() ?? (formData.link_processo && formData.link_processo.trim() !== '' ? (
                   <iframe
                     src={formData.link_processo}
                     className="w-full h-full min-h-[400px] border border-gray-200 rounded-lg"
@@ -3288,7 +3310,7 @@ export default function LicitacaoCadastro() {
                       )}
                     </div>
                   );
-                })()}
+                })())}
               </div>
             </div>
           )}

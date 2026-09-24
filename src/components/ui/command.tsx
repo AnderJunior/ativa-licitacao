@@ -1,9 +1,9 @@
 import * as React from "react";
 import { type DialogProps } from "@radix-ui/react-dialog";
-import { Command as CommandPrimitive } from "cmdk";
+import { Command as CommandPrimitive, defaultFilter } from "cmdk";
 import { Search } from "lucide-react";
 
-import { cn } from "@/lib/utils";
+import { cn, semAcento } from "@/lib/utils";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 const Command = React.forwardRef<
@@ -16,10 +16,17 @@ const Command = React.forwardRef<
       "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
       className,
     )}
+    filter={filtroSemAcento}
     {...props}
   />
 ));
 Command.displayName = CommandPrimitive.displayName;
+
+// Busca padrão de todas as listas: a mesma do cmdk, mas ignorando acento
+// ("sao paulo" acha "São Paulo"). Quem passa filter/shouldFilter próprio sobrescreve.
+function filtroSemAcento(value: string, search: string, keywords?: string[]) {
+  return defaultFilter(semAcento(value), semAcento(search), keywords?.map(semAcento));
+}
 
 interface CommandDialogProps extends DialogProps {}
 

@@ -31,7 +31,11 @@ export default async function relatoriosEnvioRoutes(fastify: FastifyInstance) {
     }
     if (q.cliente_id) whereRelatorio.cliente_id = q.cliente_id;
     if (q.cliente) {
-      whereRelatorio.cliente = { nome: { contains: q.cliente, mode: 'insensitive' } };
+      // Ignora acento nos dois sentidos ("joao" acha "JOÃO"), como no resto do sistema.
+      const clientes = await fastify.prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM clientes WHERE f_unaccent(nome) ILIKE f_unaccent(${'%' + q.cliente + '%'})
+      `;
+      whereRelatorio.cliente_id = { in: clientes.map(c => c.id) };
     }
 
     // Periodo de emissao. "filtrar_por" escolhe a data usada, como na tela antiga:
@@ -47,7 +51,14 @@ export default async function relatoriosEnvioRoutes(fastify: FastifyInstance) {
     if (q.num_ativa) whereContratacao.num_ativa = { contains: q.num_ativa, mode: 'insensitive' };
     if (q.uf) whereContratacao.uf = q.uf;
     if (q.descricao_modalidade) whereContratacao.descricao_modalidade = q.descricao_modalidade;
-    if (q.orgao_pncp) whereContratacao.orgao_pncp = { contains: q.orgao_pncp, mode: 'insensitive' };
+    if (q.orgao_pncp) {
+      // Ignora acento ("piuma" acha "PIÚMA"): resolve os nomes com f_unaccent (indexado) e filtra por IN.
+      const orgaos = await fastify.prisma.$queryRaw<{ v: string }[]>`
+        SELECT DISTINCT orgao_pncp AS v FROM contratacoes
+        WHERE orgao_pncp IS NOT NULL AND f_unaccent(orgao_pncp) ILIKE f_unaccent(${'%' + q.orgao_pncp + '%'})
+      `;
+      whereContratacao.orgao_pncp = { in: orgaos.map(o => o.v) };
+    }
     if (filtrarPor === 'dt_alteracao') {
       if (q.dt_inicio) whereContratacao.dt_atualizacao = { ...(whereContratacao.dt_atualizacao || {}), gte: q.dt_inicio };
       if (q.dt_fim) whereContratacao.dt_atualizacao = { ...(whereContratacao.dt_atualizacao || {}), lte: q.dt_fim };
@@ -75,7 +86,7 @@ export default async function relatoriosEnvioRoutes(fastify: FastifyInstance) {
         contratacao: {
           select: {
             id: true, num_ativa: true, uf: true, titulo: true, num_licitacao: true,
-            ano_compra: true, orgao_pncp: true, dt_publicacao: true, dt_atualizacao: true,
+            ano_compra: true, orgao_pncp: true, dt_publicacao: true, dt_encerramento_proposta: true, dt_atualizacao: true,
             modalidade: true, descricao_modalidade: true, created_at: true,
             tipo_licitacao: { select: { id: true, sigla: true, descricao: true } },
           },
@@ -99,6 +110,7 @@ export default async function relatoriosEnvioRoutes(fastify: FastifyInstance) {
       ano_compra: i.contratacao.ano_compra,
       orgao_pncp: i.contratacao.orgao_pncp,
       dt_publicacao: i.contratacao.dt_publicacao,
+      dt_encerramento_proposta: i.contratacao.dt_encerramento_proposta,
       dt_atualizacao: i.contratacao.dt_atualizacao,
       modalidade: i.contratacao.modalidade,
       descricao_modalidade: i.contratacao.descricao_modalidade,

@@ -11,7 +11,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Pencil, ChevronsUpDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, contemTexto } from '@/lib/utils';
 import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface Site {
@@ -73,13 +73,13 @@ export default function Sites() {
 
     if (filtroDominio.trim()) {
       filtered = filtered.filter(site =>
-        site.dominio.toLowerCase().includes(filtroDominio.toLowerCase())
+        contemTexto(site.dominio, filtroDominio)
       );
     }
 
     if (filtroSite.trim()) {
       filtered = filtered.filter(site =>
-        site.site.toLowerCase().includes(filtroSite.toLowerCase())
+        contemTexto(site.site, filtroSite)
       );
     }
 

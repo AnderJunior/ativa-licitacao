@@ -13,7 +13,7 @@ import { Loader2, Save, Plus, X, ChevronsUpDown, ArrowLeft, Trash2 } from 'lucid
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
 import { PncpOrgaoInfo, type PncpOrgaoDados } from '@/components/orgaos/PncpOrgaoInfo';
-import { cn } from '@/lib/utils';
+import { cn, contemTexto } from '@/lib/utils';
 import { usePermissoes } from '@/contexts/PermissoesContext';
 
 interface Site {
@@ -675,10 +675,7 @@ export default function OrgaoCadastro() {
                           {sites
                             .filter((site) => {
                               if (!siteSearchTerm) return false;
-                              const searchLower = siteSearchTerm.toLowerCase();
-                              const dominioLower = site.dominio?.toLowerCase() || '';
-                              const siteLower = site.site?.toLowerCase() || '';
-                              return dominioLower.includes(searchLower) || siteLower.includes(searchLower);
+                              return contemTexto(site.dominio, siteSearchTerm) || contemTexto(site.site, siteSearchTerm);
                             })
                             .map((site) => {
                               const isSelected = formData.sites?.includes(site.site) || false;

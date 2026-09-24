@@ -72,6 +72,21 @@ export default async function contratacoesRoutes(fastify: FastifyInstance) {
         where[field] = { ...(where[field] || {}), lte: q[field + '_lte'] };
       }
     }
+    // "Recebendo proposta" (igual ao status do portal PNCP): so entra a licitacao
+    // cujo prazo de proposta ainda estava aberto no momento da data-base do periodo.
+    // Sem isto, uma licitacao antiga ja encerrada, que o orgao apenas atualizou no
+    // dia, aparecia na lista do dia — em 21/09 foram 42 assim no ES. Dispensa sem
+    // data de encerramento tambem fica fora (o PNCP nao a lista como recebendo).
+    // Os campos sao texto ISO no mesmo formato, entao a comparacao textual vale.
+    const camposBaseProposta = ['dt_atualizacao', 'dt_publicacao', 'dt_criacao', 'dt_importacao'] as const;
+    const baseProposta = camposBaseProposta.find(c => c === q.proposta_aberta_em);
+    if (baseProposta) {
+      where.AND = [
+        ...(where.AND || []),
+        { dt_encerramento_proposta: { gte: fastify.prisma.contratacoes.fields[baseProposta] } },
+      ];
+    }
+
     // created_at é DateTime real — precisa converter para Date
     if (q.created_at_gte) {
       where.created_at = { ...(where.created_at || {}), gte: new Date(q.created_at_gte) };
@@ -336,21 +351,46 @@ export default async function contratacoesRoutes(fastify: FastifyInstance) {
   fastify.get('/api/contratacoes/relatorio/produtividade', { preHandler: [requireAuth] }, async (request, reply) => {
     const { dt_inicio, dt_fim } = request.query as { dt_inicio?: string; dt_fim?: string };
 
+    // Produtividade conta o MOMENTO DO CADASTRO (dt_vinculo_ativa), e não created_at.
+    // Numa licitação do PNCP, created_at é a data da importação automática — uma
+    // importada em 28/07 e cadastrada pelo usuário em 11/09 sumia do relatório de 11/09.
+    // dt_vinculo_ativa é texto ISO em UTC ("2026-09-11T17:52:11.135Z"), então a
+    // comparação de string respeita a ordem cronológica. Sem ela, cai em created_at.
+    const inicio = dt_inicio ? new Date(dt_inicio) : null;
+    const fim = dt_fim ? new Date(dt_fim) : null;
+    const faixaTexto: any = {};
+    const faixaData: any = {};
+    if (inicio) { faixaTexto.gte = inicio.toISOString(); faixaData.gte = inicio; }
+    if (fim) { faixaTexto.lte = fim.toISOString(); faixaData.lte = fim; }
+
     const where: any = { cadastrado: true };
-    if (dt_inicio) where.created_at = { ...(where.created_at || {}), gte: new Date(dt_inicio) };
-    if (dt_fim) where.created_at = { ...(where.created_at || {}), lte: new Date(dt_fim) };
+    if (inicio || fim) {
+      where.OR = [
+        { dt_vinculo_ativa: faixaTexto },
+        { dt_vinculo_ativa: null, created_at: faixaData },
+      ];
+    }
 
     const contratacoes = await fastify.prisma.contratacoes.findMany({
       where,
       select: {
         created_at: true,
+        dt_vinculo_ativa: true,
         tipo_cadastro: true,
         cadastrado_por: true,
       },
-      orderBy: { created_at: 'asc' },
     });
 
-    return reply.send(contratacoes);
+    // A tela lê "created_at" como o horário do cadastro (H.Ini/H.Fim e agrupamento).
+    const registros = contratacoes
+      .map(c => ({
+        created_at: c.dt_vinculo_ativa || c.created_at.toISOString(),
+        tipo_cadastro: c.tipo_cadastro,
+        cadastrado_por: c.cadastrado_por,
+      }))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+    return reply.send(registros);
   });
 
   // GET /api/contratacoes/check-num-ativa — verifica se num_ativa ja existe no mes

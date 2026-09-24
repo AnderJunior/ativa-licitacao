@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { contemTexto } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -102,25 +103,21 @@ export function CidadePopup({ open, onOpenChange, onSelect }: CidadePopupProps) 
   // Filtrar estados e municípios pela busca
   const filteredEstados = ESTADOS.filter(estado => {
     if (!search) return true;
-    const searchLower = search.toLowerCase();
-    
-    // Verifica se o estado corresponde
-    if (estado.nome.toLowerCase().includes(searchLower) || 
-        estado.sigla.toLowerCase().includes(searchLower)) {
+    // Verifica se o estado corresponde (ignora acento: "sao paulo" acha "São Paulo")
+    if (contemTexto(estado.nome, search) || contemTexto(estado.sigla, search)) {
       return true;
     }
     
     // Verifica se algum município corresponde
     const estadoMunicipios = municipios[estado.sigla] || [];
-    return estadoMunicipios.some(m => m.nome.toLowerCase().includes(searchLower));
+    return estadoMunicipios.some(m => contemTexto(m.nome, search));
   });
 
   const getFilteredMunicipios = (uf: string): Municipio[] => {
     const estadoMunicipios = municipios[uf] || [];
     if (!search) return estadoMunicipios;
     
-    const searchLower = search.toLowerCase();
-    return estadoMunicipios.filter(m => m.nome.toLowerCase().includes(searchLower));
+    return estadoMunicipios.filter(m => contemTexto(m.nome, search));
   };
 
   return (

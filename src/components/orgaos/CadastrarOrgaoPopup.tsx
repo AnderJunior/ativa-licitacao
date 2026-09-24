@@ -14,7 +14,7 @@ import { Loader2, Save, Plus, X, ChevronsUpDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { CidadePopup } from '@/components/orgaos/CidadePopup';
-import { cn } from '@/lib/utils';
+import { cn, contemTexto } from '@/lib/utils';
 
 interface Site {
   id: string;
@@ -593,10 +593,7 @@ export function CadastrarOrgaoPopup({
                               {sites
                                 .filter((site) => {
                                   if (!siteSearchTerm) return false;
-                                  const searchLower = siteSearchTerm.toLowerCase();
-                                  const dominioLower = site.dominio?.toLowerCase() || '';
-                                  const siteLower = site.site?.toLowerCase() || '';
-                                  return dominioLower.includes(searchLower) || siteLower.includes(searchLower);
+                                  return contemTexto(site.dominio, siteSearchTerm) || contemTexto(site.site, siteSearchTerm);
                                 })
                                 .map((site) => {
                                   const isSelected = formData.sites?.includes(site.site) || false;

@@ -64,18 +64,18 @@ const PAGE_SIZE_RECUPERACAO = 10;
 const DIAS_JANELA_INCREMENTAL = 0;
 
 /**
- * Horizonte de busca, em dias.
+ * Ate quando a varredura completa busca, pelo ENCERRAMENTO da proposta
+ * (o endpoint /contratacoes/proposta filtra por ele).
  *
- * O endpoint /contratacoes/proposta filtra pelo ENCERRAMENTO do recebimento de
- * propostas. Com o valor antigo (30) uma licitacao publicada hoje com prazo de
- * 45 dias so era importada 15 dias depois, e a consulta do dia mostrava uma
- * fracao do que existia no PNCP.
- *
- * 180 dias ainda deixava de fora credenciamento de prazo longo: o do Municipio
- * de Anchieta encerra em 27/08/2027, quase um ano a frente. 400 dias cobre a
- * janela de um ano com folga.
+ * Historico: 30 dias deixava de fora licitacao com prazo de 45; 180 e depois
+ * 400 dias ainda perdiam credenciamentos e registros de preco de prazo longo.
+ * Em 24/09/2026, das licitacoes que o portal mostrava como "Recebendo Proposta"
+ * e que faltavam na base, TODAS tinham encerramento alem de 400 dias — ate 2031
+ * e varias com ano digitado errado pelo orgao (2099, 3024, 9999), que o portal
+ * mesmo assim lista como recebendo. Sem limite, o PNCP devolve o mesmo que o
+ * portal: no credenciamento, 11,8 mil registros no Brasil (eram 8,4 mil).
  */
-const HORIZONTE_DIAS = 400;
+const DATA_FINAL_PROPOSTA = '99991231';
 
 // ── Tipos da API PNCP ────────────────────────────────────
 interface PncpOrgaoEntidade {
@@ -146,8 +146,6 @@ export function getSyncConfig() {
   const hoje = new Date();
   const inicioJanela = new Date();
   inicioJanela.setDate(inicioJanela.getDate() - DIAS_JANELA_INCREMENTAL);
-  const fimHorizonte = new Date();
-  fimHorizonte.setDate(fimHorizonte.getDate() + HORIZONTE_DIAS);
 
   return {
     varreduras: [
@@ -171,8 +169,8 @@ export function getSyncConfig() {
         criterio: 'Licitacoes com recebimento de propostas em aberto',
         intervalo: `${INTERVALO_COMPLETO_MS / 3600000} horas`,
         intervaloMs: INTERVALO_COMPLETO_MS,
-        janela: `Propostas encerrando nos proximos ${HORIZONTE_DIAS} dias`,
-        periodoAgora: `ate ${formatDataPncp(fimHorizonte)}`,
+        janela: 'Todas as propostas ainda abertas, sem limite de prazo',
+        periodoAgora: 'sem limite (ate 31/12/9999)',
         paraQueServe: 'Confere todo o catalogo aberto e cobre o que a incremental nao alcancou.',
       },
     ],
@@ -233,11 +231,9 @@ function formatDataPncp(d: Date): string {
   return `${yyyy}${mm}${dd}`;
 }
 
-/** Retorna a data do fim do horizonte de busca no formato yyyyMMdd */
+/** Data final da varredura completa, no formato yyyyMMdd (ver DATA_FINAL_PROPOSTA) */
 function formatDataFinalHorizonte(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + HORIZONTE_DIAS);
-  return formatDataPncp(d);
+  return DATA_FINAL_PROPOSTA;
 }
 
 /** Formata data atual como yyyy-MM-dd'T'HH:mm:ss (sem timezone) */
@@ -379,10 +375,21 @@ function chaveContratacao(numeroControlePNCP: string | null, unCod: string | nul
  * retificacao e a licitacao "pulava" de horario — uma criada as 10h e retificada
  * as 12h05 sumia de uma consulta das 00:00 as 12:00 que antes a mostrava.
  */
+/**
+ * Padrao da equipe: 3 digitos antes da barra ("011/2026", "007/2026").
+ * O PNCP devolve o numero como o orgao digitou ("000011", "0026", "7"), e esse
+ * zero a mais impedia o Cadastro de reconhecer a licitacao ja existente.
+ * So mexe quando o numero comeca com digitos seguidos de fim, "/" ou "-":
+ * "13.003", "PCE0962..." e "10R" ficam como vieram.
+ */
+export function padronizarNumeroCompra(numero: string | null | undefined): string {
+  return String(numero ?? '').trim().replace(/^0*(\d+)(?=$|[\/\-])/, (_, d: string) => d.padStart(3, '0'));
+}
+
 function camposDoPncp(item: PncpContratacao) {
   return {
     uf: item.unidadeOrgao?.ufSigla || null,
-    titulo: `${item.tipoInstrumentoConvocatorioNome || ''} nº ${item.numeroCompra || ''}`,
+    titulo: `${item.tipoInstrumentoConvocatorioNome || ''} nº ${padronizarNumeroCompra(item.numeroCompra)}`,
     municipio: item.unidadeOrgao?.municipioNome || null,
     unidade: item.unidadeOrgao?.nomeUnidade || null,
     orgao_pncp: item.orgaoEntidade?.razaoSocial || null,
@@ -647,7 +654,7 @@ export async function syncPncp(
     console.log(`[PNCP Sync] Iniciando sync ${modo.toUpperCase()}`);
     console.log(
       modo === 'completo'
-        ? `[PNCP Sync] Propostas abertas ate ${dataFinal} (horizonte de ${HORIZONTE_DIAS} dias)`
+        ? `[PNCP Sync] Propostas abertas ate ${dataFinal} (sem limite de prazo)`
         : `[PNCP Sync] Atualizadas de ${dataInicial} a ${dataFinal} (janela de ${DIAS_JANELA_INCREMENTAL} dias)`,
     );
     console.log(`[PNCP Sync] Modalidades: ${MODALIDADES.join(', ')}`);
@@ -840,7 +847,7 @@ const INTERVALO_COMPLETO_MS = 6 * 60 * 60 * 1000; // 6 h
 export function startPncpCron(prisma: PrismaClient) {
   console.log(
     `[PNCP Cron] Incremental a cada ${INTERVALO_INCREMENTAL_MS / 60000} min | ` +
-    `Completa a cada ${INTERVALO_COMPLETO_MS / 3600000} h (horizonte de ${HORIZONTE_DIAS} dias)`,
+    `Completa a cada ${INTERVALO_COMPLETO_MS / 3600000} h (propostas abertas, sem limite de prazo)`,
   );
 
   const executar = (modo: SyncModo, origem: string) => {

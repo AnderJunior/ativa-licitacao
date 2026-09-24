@@ -17,7 +17,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useResizableColumns } from '@/hooks/use-resizable-columns';
-import { cn } from '@/lib/utils';
+import { cn, contemTexto } from '@/lib/utils';
 import { chaveVinculo } from '@/lib/orgaoUasg';
 
 interface Contratacao {
@@ -85,6 +85,7 @@ const REGIOES_E_UFS: { regiao: string; ufs: string[] }[] = [
   { regiao: 'Sul', ufs: ['PR', 'RS', 'SC'] },
   { regiao: 'Centro-Oeste', ufs: ['DF', 'GO', 'MS', 'MT'] },
   { regiao: 'Norte', ufs: ['AC', 'AM', 'AP', 'PA', 'RO', 'RR', 'TO'] },
+  { regiao: 'Exterior', ufs: ['EX'] },
 ];
 
 const ESFERA_OPCOES = ['Federal', 'Estadual', 'Municipal'];
@@ -108,6 +109,7 @@ const UF_NOMES: Record<string, string> = {
   PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
   RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina',
   SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins',
+  EX: 'Exterior',
 };
 
 // UF no formato do modelo: "ES-Espírito Santo"
@@ -238,6 +240,8 @@ export default function LicitacaoConsulta() {
   const [filtroNumAtiva, setFiltroNumAtiva] = useState(savedFilters?.filtroNumAtiva || '');
   const [filtroNPncp, setFiltroNPncp] = useState(savedFilters?.filtroNPncp || '');
   const [filtroPeriodoBase, setFiltroPeriodoBase] = useState<'dt_atualizacao' | 'dt_publicacao' | 'dt_criacao' | 'dt_importacao' | 'dt_vigencia_ini' | 'dt_vinculo_ativa'>(savedFilters?.filtroPeriodoBase || 'dt_atualizacao');
+  // Só licitações com proposta aberta na data-base (= "A Receber/Recebendo Proposta" do PNCP)
+  const [filtroRecebendo, setFiltroRecebendo] = useState<boolean>(savedFilters?.filtroRecebendo ?? true);
   const [filtroSituacaoRadio, setFiltroSituacaoRadio] = useState<'pendentes' | 'vinculadas' | 'excluidas' | 'todas'>(savedFilters?.filtroSituacaoRadio || 'todas');
   const [filtroLayout, setFiltroLayout] = useState<'resumido' | 'detalhado' | 'unidades' | 'modalidade'>(savedFilters?.filtroLayout || 'resumido');
   const [selectedUFs, setSelectedUFs] = useState<Set<string>>(new Set(savedFilters?.selectedUFs || []));
@@ -265,13 +269,13 @@ export default function LicitacaoConsulta() {
     sessionStorage.setItem('consulta-filtros', JSON.stringify({
       activeTab, filtroUF, filtroOrgao, filtroDataInicio, filtroDataFim,
       filtroMunicipio, filtroEsfera, filtroPoder, filtroModalidade, filtroSituacao,
-      filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio,
+      filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio, filtroRecebendo,
       filtroLayout, selectedUFs: Array.from(selectedUFs), filtroUFConferir,
       sortCol, sortDir,
     }));
   }, [activeTab, filtroUF, filtroOrgao, filtroDataInicio, filtroDataFim,
     filtroMunicipio, filtroEsfera, filtroPoder, filtroModalidade, filtroSituacao,
-    filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio,
+    filtroNumAtiva, filtroNPncp, filtroPeriodoBase, filtroSituacaoRadio, filtroRecebendo,
     filtroLayout, selectedUFs, sortCol, sortDir]);
 
   // Reseta os filtros ao sair da página de Consultas (desmonte do componente).
@@ -604,6 +608,11 @@ export default function LicitacaoConsulta() {
     const campoData = filtroPeriodoBase;
     if (filtroDataInicio) params[campoData + '_gte'] = filtroDataInicio;
     if (filtroDataFim) params[campoData + '_lte'] = filtroDataFim;
+    // Recebendo proposta: vale para as datas que vêm do PNCP. Em DtVigência e
+    // DtVínculo Ativa não se aplica (a segunda é o cadastro feito pela equipe).
+    if (filtroRecebendo && ['dt_atualizacao', 'dt_publicacao', 'dt_criacao', 'dt_importacao'].includes(campoData)) {
+      params.proposta_aberta_em = campoData;
+    }
     if (filtroMunicipio) params.municipio = filtroMunicipio;
     if (filtroEsfera) params.esfera = filtroEsfera;
     if (filtroPoder) params.poder = filtroPoder;
@@ -728,6 +737,71 @@ export default function LicitacaoConsulta() {
     }
   };
 
+  // Conferir para Enviar: Esc desmarca a licitação e fecha o texto/atividades de baixo.
+  // Se houver um diálogo aberto (ex.: confirmação de Excluir), o Esc é só dele.
+  useEffect(() => {
+    if (activeTab !== 'conferir') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      setSelectedConferir(null);
+      setSelectedConferirIds(new Set());
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTab]);
+
+  // Exporta para XLSX exatamente o que está na tela da aba Licitações Enviadas
+  // (mesmas colunas e linhas, já filtradas), nas visões Por Licitação e Por Cliente.
+  const handleExportarEnviadas = () => {
+    const editalDe = (titulo: string | null | undefined, ano: string | null | undefined, numLicitacao: string | null | undefined) => {
+      const t = (titulo || '').replace(/edital\s+n[ºo°]?\s*/i, '').trim();
+      return t && ano ? `${t}/${ano}` : t || numLicitacao || '';
+    };
+    const data = (v: string | null | undefined) => { const d = formatDate(v || null); return d === '-' ? '' : d; };
+
+    let aoa: (string | number)[][];
+    let nome: string;
+    if (enviadasView === 'cliente') {
+      aoa = [['N. Controle Ativa', 'UF', 'Tipo', 'Edital', 'Órgão', 'Dt. Licitação', 'Dt. Envio', 'N. Relatório', 'Cliente']];
+      enviadasPorCliente.forEach(l => aoa.push([
+        formatarNumAtiva(l.num_ativa, l.contratacao_created_at || undefined),
+        l.uf || '',
+        l.tipo_licitacao?.descricao || l.modalidade || '',
+        editalDe(l.titulo, l.ano_compra, l.num_licitacao),
+        l.orgao_pncp || '',
+        data(l.dt_publicacao || (l as any).dt_encerramento_proposta),
+        data(l.dt_envio),
+        l.num_relatorio ?? '',
+        l.cliente_nome || '',
+      ]));
+      nome = 'enviadas_por_cliente';
+    } else {
+      aoa = [['N. Controle', 'UF', 'Rev', 'Tipo', 'Edital', 'Órgão', 'Dt. Licitação', 'Dt. Envio']];
+      contratacoes.forEach(c => aoa.push([
+        formatarNumAtiva(c.num_ativa || c.n_controle_ativa || null, (c as any).created_at),
+        c.uf || '',
+        c.revisao ? 'S' : 'N',
+        c.tipo_licitacao?.sigla || c.modalidade || '',
+        editalDe((c as any).titulo, (c as any).ano_compra, c.num_licitacao),
+        c.orgao_pncp || '',
+        data(c.dt_publicacao || (c as any).dt_encerramento_proposta),
+        data((c as any).dt_envio),
+      ]));
+      nome = 'enviadas_por_licitacao';
+    }
+
+    if (aoa.length === 1) {
+      toast.info('Nenhuma licitação na tela para exportar.');
+      return;
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa.map(row => row.map(limparXML)));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Enviadas');
+    XLSX.writeFile(wb, `licitacoes_${nome}.xlsx`);
+    toast.success(`Exportados ${aoa.length - 1} registros`);
+  };
+
   // recount=false ao apenas mudar de página (mesmos filtros): evita refazer
   // o count de 122k registros, deixando a navegação entre páginas mais rápida.
   const loadContratacoes = async (page?: number, recount = true) => {
@@ -804,12 +878,12 @@ export default function LicitacaoConsulta() {
           cadastrado_por_nome: c.cadastrado_por ? (profilesMapEnv[c.cadastrado_por] || null) : null,
         }));
 
-        if (filtroEnviadasNControle) enviadasData = enviadasData.filter((c: any) => c.num_ativa?.toLowerCase().includes(filtroEnviadasNControle.toLowerCase()));
+        if (filtroEnviadasNControle) enviadasData = enviadasData.filter((c: any) => contemTexto(c.num_ativa, filtroEnviadasNControle));
         if (filtroEnviadasDataInicio) enviadasData = enviadasData.filter((c: any) => c.dt_envio && c.dt_envio >= filtroEnviadasDataInicio);
         if (filtroEnviadasDataFim) enviadasData = enviadasData.filter((c: any) => c.dt_envio && c.dt_envio <= filtroEnviadasDataFim);
         if (filtroEnviadasUF) enviadasData = enviadasData.filter((c: any) => c.uf === filtroEnviadasUF);
         if (filtroEnviadasTipo) enviadasData = enviadasData.filter((c: any) => c.descricao_modalidade === filtroEnviadasTipo);
-        if (filtroEnviadasOrgao) enviadasData = enviadasData.filter((c: any) => c.orgao_pncp?.toLowerCase().includes(filtroEnviadasOrgao.toLowerCase()));
+        if (filtroEnviadasOrgao) enviadasData = enviadasData.filter((c: any) => contemTexto(c.orgao_pncp, filtroEnviadasOrgao));
 
         setContratacoes(enviadasData);
         setLoading(false);
@@ -914,6 +988,7 @@ export default function LicitacaoConsulta() {
     setFiltroNPncp('');
     setSelectedUFs(new Set<string>());
     setFiltroPeriodoBase('dt_atualizacao');
+    setFiltroRecebendo(true);
     setFiltroLayout('resumido');
     setFiltroSituacaoRadio('todas');
     setEsferaSearchTerm('');
@@ -1575,6 +1650,10 @@ export default function LicitacaoConsulta() {
                     </div>
                   </PopoverContent>
                 </Popover>
+                <Button variant="outline" size="sm" onClick={handleExportarEnviadas} disabled={loading} title="Baixar em Excel o que está na tela">
+                  <Download className="w-4 h-4 mr-2" />
+                  Exportar
+                </Button>
               </div>
             )}
             {activeTab !== 'conferir' && activeTab !== 'enviadas' && (
@@ -1693,6 +1772,21 @@ export default function LicitacaoConsulta() {
                         className="w-[175px] text-xs"
                       />
                     </div>
+                    <label
+                      className={cn(
+                        'flex items-center gap-2 text-xs cursor-pointer',
+                        (filtroPeriodoBase === 'dt_vigencia_ini' || filtroPeriodoBase === 'dt_vinculo_ativa') && 'opacity-50',
+                      )}
+                      title='Igual ao status "A Receber/Recebendo Proposta" do PNCP: só mostra a licitação cujo prazo de proposta ainda estava aberto na data escolhida acima. Não se aplica a DtVigênciaIni e DtVínculo Ativa.'
+                    >
+                      <input
+                        type="checkbox"
+                        checked={filtroRecebendo}
+                        onChange={(e) => setFiltroRecebendo(e.target.checked)}
+                        className="w-4 h-4 accent-[#02572E]"
+                      />
+                      Somente recebendo proposta
+                    </label>
                   </div>
 
                   {/* Situação */}
@@ -1982,7 +2076,7 @@ export default function LicitacaoConsulta() {
                         return titulo && ano ? `${titulo}/${ano}` : titulo || c.num_licitacao || '-';
                       })()}
                     </td>
-                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(c.dt_publicacao)}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(c.dt_publicacao || (c as any).dt_encerramento_proposta)}</td>
                     <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatarNumAtiva(c.num_ativa || c.n_controle_ativa || null, (c as any).created_at)}</td>
                     <td className="px-3 py-1.5 text-sm text-center">
                       {c.revisao ? <span className={isSelected ? 'text-white font-bold' : 'text-green-600 font-bold'}>S</span> : <span className="opacity-40">N</span>}
@@ -2276,7 +2370,7 @@ export default function LicitacaoConsulta() {
                       })()}
                     </td>
                     <td className="px-3 py-1.5 text-sm max-w-[220px] truncate" title={l.orgao_pncp || ''}>{l.orgao_pncp || '-'}</td>
-                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(l.dt_publicacao)}</td>
+                    <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(l.dt_publicacao || (l as any).dt_encerramento_proposta)}</td>
                     <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(l.dt_envio)}</td>
                     <td className="px-3 py-1.5 text-sm whitespace-nowrap">{l.num_relatorio}</td>
                     <td className="px-3 py-1.5 text-sm max-w-[220px] truncate" title={l.cliente_nome || ''}>{l.cliente_nome || '-'}</td>
@@ -2316,7 +2410,7 @@ export default function LicitacaoConsulta() {
                         })()}
                       </td>
                       <td className="px-3 py-1.5 text-sm max-w-[200px] truncate">{c.orgao_pncp || '-'}</td>
-                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(c.dt_publicacao)}</td>
+                      <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate(c.dt_publicacao || (c as any).dt_encerramento_proposta)}</td>
                       <td className="px-3 py-1.5 text-sm whitespace-nowrap">{formatDate((c as any).dt_envio)}</td>
                     </tr>
                   );

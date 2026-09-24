@@ -12,14 +12,16 @@ export default async function tipoLicitacoesRoutes(fastify: FastifyInstance) {
   fastify.get('/api/tipo-licitacoes', { preHandler: [requireAuth] }, async (request, reply) => {
     const { search } = request.query as { search?: string };
 
-    const where = search
-      ? {
-          OR: [
-            { sigla: { contains: search, mode: 'insensitive' as const } },
-            { descricao: { contains: search, mode: 'insensitive' as const } },
-          ],
-        }
-      : {};
+    // Ignora acento nos dois sentidos ("pregao" acha "PREGÃO").
+    let where = {};
+    if (search) {
+      const encontrados = await fastify.prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM tipo_licitacoes
+        WHERE f_unaccent(sigla) ILIKE f_unaccent(${'%' + search + '%'})
+           OR f_unaccent(coalesce(descricao, '')) ILIKE f_unaccent(${'%' + search + '%'})
+      `;
+      where = { id: { in: encontrados.map(t => t.id) } };
+    }
 
     const tipos = await fastify.prisma.tipo_licitacoes.findMany({
       where,

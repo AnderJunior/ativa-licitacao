@@ -137,4 +137,53 @@ export default async function pncpSyncRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({ error: err.message });
     }
   });
+  // GET /api/pncp/itens?cnpj=&ano=&sequencial=&pagina=&tamanhoPagina=
+  // Espelho dos itens do edital (botão "Exibir Licitação" do Cadastro).
+  // Passa pelo servidor porque a página do PNCP não abre em iframe
+  // (X-Frame-Options: SAMEORIGIN).
+  fastify.get('/api/pncp/itens', { preHandler: [requireAuth] }, async (request, reply) => {
+    const q = request.query as { cnpj?: string; ano?: string; sequencial?: string; pagina?: string; tamanhoPagina?: string };
+    const cnpj = (q.cnpj || '').replace(/\D/g, '');
+    const ano = (q.ano || '').replace(/\D/g, '');
+    const sequencial = String(Number((q.sequencial || '').replace(/\D/g, '')) || '');
+    if (cnpj.length !== 14 || ano.length !== 4 || !sequencial) {
+      return reply.status(400).send({ error: 'Informe cnpj (14 dígitos), ano e sequencial da compra no PNCP.' });
+    }
+    const pagina = Math.max(1, Number(q.pagina) || 1);
+    const tamanhoPagina = Math.min(50, Math.max(1, Number(q.tamanhoPagina) || 10));
+    const base = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${sequencial}/itens`;
+
+    const buscar = async (url: string) => {
+      const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+      if (res.status === 204 || res.status === 404) return null;
+      if (!res.ok) throw new Error(`PNCP respondeu ${res.status}`);
+      const texto = await res.text();
+      return texto ? JSON.parse(texto) : null;
+    };
+
+    try {
+      const [itens, total] = await Promise.all([
+        buscar(`${base}?pagina=${pagina}&tamanhoPagina=${tamanhoPagina}`),
+        buscar(`${base}/quantidade`),
+      ]);
+      return reply.send({
+        pagina,
+        tamanhoPagina,
+        total: Number(total) || 0,
+        link: `https://pncp.gov.br/app/editais/${cnpj}/${ano}/${sequencial}`,
+        itens: (Array.isArray(itens) ? itens : []).map((i: any) => ({
+          numeroItem: i.numeroItem,
+          descricao: i.descricao,
+          quantidade: i.quantidade,
+          unidadeMedida: i.unidadeMedida,
+          valorUnitarioEstimado: i.valorUnitarioEstimado,
+          valorTotal: i.valorTotal,
+          orcamentoSigiloso: !!i.orcamentoSigiloso,
+          situacao: i.situacaoCompraItemNome || null,
+        })),
+      });
+    } catch (err: any) {
+      return reply.status(502).send({ error: `Não foi possível consultar o PNCP: ${err.message}` });
+    }
+  });
 }
