@@ -330,9 +330,12 @@ async function fetchPncpPage(params: ParametrosBusca): Promise<ResultadoPagina> 
         return { tipo: 'ok', dados: JSON.parse(texto) as PncpResponse };
       }
 
-      // 400 aqui significa parametro que o PNCP nao aceita — na pratica, codigo
-      // de modalidade que nao existe. Nao adianta insistir e nao e perda de dado.
-      if (res.status === 400) return { tipo: 'vazio' };
+      // 400/422 aqui significam parametro que o PNCP nao aceita — na pratica, codigo
+      // de modalidade que nao existe ("Codigo da modalidade de contratacao
+      // invalido", HTTP 422, para o codigo 20). Nao adianta insistir e nao e perda
+      // de dado. O 422 era tratado como falha: 6 tentativas com espera crescente
+      // em TODO ciclo, o que atrasava a incremental e a deixava perder o horario.
+      if (res.status === 400 || res.status === 422) return { tipo: 'vazio' };
 
       ultimoMotivo = `HTTP ${res.status}`;
       console.error(`[PNCP] ${ultimoMotivo} em ${onde} (tentativa ${tentativa}/${TENTATIVAS_POR_PAGINA})`);
